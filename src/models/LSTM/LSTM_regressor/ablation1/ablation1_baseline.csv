@@ -1,0 +1,2 @@
+forecast_horizon,look_back,units,batch_size,learning_rate,epochs_run,mse,mae,rmse,r2_score,coverage_probability (%),interval_width
+1,64,193,16,0.0029106359131330704,44,6.908855469590553e-05,0.0069948312165080614,0.008311952520070451,0.9673758993400572,86.18357487922705,0.022682784
