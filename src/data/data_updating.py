@@ -1,6 +1,7 @@
 import yfinance as yf
 import os
 import pandas as pd
+import subprocess
 
 input_dir = '../../data/raw'
 
@@ -52,3 +53,4 @@ def update_data():
 
 if __name__ == "__main__":
     update_data()
+    subprocess.run(['python', 'data_preprocessing.py'])
