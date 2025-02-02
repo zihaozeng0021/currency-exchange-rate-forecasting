@@ -33,7 +33,7 @@ print(f"GPU: {gpu_devices}" if gpu_devices else "No GPU found; running on CPU.")
 DATA_PATH = '../../../../../data/raw/USDEUR=X_max_1d.csv'
 FORECAST_HORIZONS_REG = [1]
 N_TRIALS = 32
-REGRESSION_CSV_PATH = './ablation1_baseline.csv'
+REGRESSION_CSV_PATH = 'results/ablation1_baseline.csv'
 
 # Global list to store final results
 regressor_results = []
