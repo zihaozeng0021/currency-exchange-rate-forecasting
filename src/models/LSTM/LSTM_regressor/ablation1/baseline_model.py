@@ -32,49 +32,32 @@ print(f"GPU: {gpu_devices}" if gpu_devices else "No GPU found; running on CPU.")
 # File paths and constants
 DATA_PATH = '../../../../../data/raw/USDEUR=X_max_1d.csv'
 FORECAST_HORIZONS_REG = [1]
-N_TRIALS = 200
+N_TRIALS = 32
 REGRESSION_CSV_PATH = './ablation1_baseline.csv'
 
-# Global list to store final regression results
+# Global list to store final results
 regressor_results = []
 
 
+def generate_sliding_windows(data_length: int) -> list:
+    """Generate sliding window configurations for time series validation"""
+    return [
+        {'type': 'window_1', 'train': (0.0, 0.3), 'test': (0.3, 0.4)},
+        {'type': 'window_2', 'train': (0.3, 0.6), 'test': (0.6, 0.7)},
+        {'type': 'window_3', 'train': (0.6, 0.9), 'test': (0.9, 1.0)}
+    ]
+
+
 def load_data(csv_path: str) -> pd.DataFrame:
-    """
-    Load data from CSV, handle infinities, and drop missing rows.
-    """
+    """Load and preprocess data from CSV"""
     df = pd.read_csv(csv_path, index_col='Date', parse_dates=True)
-    df = df.replace([np.inf, -np.inf], np.nan).dropna()
-    return df
-
-
-def split_data(data: np.ndarray, train_ratio: float = 0.8) -> tuple:
-    """
-    Split data into train and test arrays based on a train_ratio.
-    """
-    train_size = int(len(data) * train_ratio)
-    train_data = data[:train_size]
-    test_data = data[train_size:]
-    return train_data, test_data
-
-
-def scale_data(train_data_raw: np.ndarray,
-               test_data_raw: np.ndarray) -> tuple:
-    """
-    Scale data using MinMaxScaler from 0 to 1.
-    """
-    scaler = MinMaxScaler((0, 1))
-    train_scaled = scaler.fit_transform(train_data_raw.reshape(-1, 1))
-    test_scaled = scaler.transform(test_data_raw.reshape(-1, 1))
-    return scaler, train_scaled, test_scaled
+    return df.replace([np.inf, -np.inf], np.nan).dropna()
 
 
 def create_dataset_regression(dataset: np.ndarray,
                               look_back: int = 1,
                               horizon: int = 1) -> tuple:
-    """
-    Create X, y sequences for regression based on look_back and horizon.
-    """
+    """Create time-series sequences for LSTM training"""
     X, y = [], []
     for i in range(len(dataset) - look_back - horizon + 1):
         X_seq = dataset[i: i + look_back, 0]
@@ -88,9 +71,7 @@ def build_regression_model(look_back: int,
                            units: int,
                            horizon: int,
                            lr: float) -> Sequential:
-    """
-    Build and compile an LSTM-based regression model with RMSprop optimizer.
-    """
+    """Construct LSTM model architecture"""
     model = Sequential([
         Input(shape=(look_back, 1)),
         LSTM(units),
@@ -105,9 +86,7 @@ def objective(trial: optuna.trial.Trial,
               X_train_full: np.ndarray,
               horizon: int,
               X_val: np.ndarray) -> float:
-    """
-    Optuna objective function to search for the best hyperparameters.
-    """
+    """Optuna optimization objective function"""
     # Hyperparameter suggestions
     look_back = trial.suggest_int('look_back', 30, 120)
     units = trial.suggest_int('units', 50, 200)
@@ -119,7 +98,7 @@ def objective(trial: optuna.trial.Trial,
     X_train, y_train = create_dataset_regression(X_train_full, look_back, horizon)
     X_val_, y_val_ = create_dataset_regression(X_val, look_back, horizon)
 
-    # If no data, return infinity (invalid case)
+    # Handle insufficient data cases
     if len(X_train) == 0 or len(X_val_) == 0:
         return float('inf')
 
@@ -137,97 +116,117 @@ def objective(trial: optuna.trial.Trial,
         verbose=0
     )
 
-    # Return final validation loss
     return history.history['val_loss'][-1]
 
 
-def optimize_and_train_regression(train_scaled: np.ndarray,
-                                  test_scaled: np.ndarray,
-                                  scaler: MinMaxScaler,
-                                  horizon: int) -> None:
-    """
-    Optimize hyperparameters for a given horizon using Optuna,
-    then train and evaluate the final regression model.
-    """
-    # Create train/validation split for hyperparameter tuning
+def process_window(window_config: dict,
+                   data: np.ndarray,
+                   horizon: int) -> None:
+    """Process a single sliding window"""
+    # Calculate data indices
+    n_samples = len(data)
+    train_start = int(window_config['train'][0] * n_samples)
+    train_end = int(window_config['train'][1] * n_samples)
+    test_start = int(window_config['test'][0] * n_samples)
+    test_end = int(window_config['test'][1] * n_samples)
+
+    # Extract window data
+    train_raw = data[train_start:train_end]
+    test_raw = data[test_start:test_end]
+
+    # Data validation check
+    if len(train_raw) < 10 or len(test_raw) < 10:
+        print(f"Skipping {window_config['type']} - insufficient data")
+        return
+
+    # Scale window data independently
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    train_scaled = scaler.fit_transform(train_raw.reshape(-1, 1))
+    test_scaled = scaler.transform(test_raw.reshape(-1, 1))
+
+    # Hyperparameter tuning setup
     val_ratio = 0.2
-    val_size = int(len(train_scaled) * val_ratio)
-    train_tune = train_scaled[:-val_size]
-    val_tune = train_scaled[-val_size:]
+    val_size = max(1, int(len(train_scaled) * val_ratio))
 
-    def optuna_objective(trial):
-        return objective(trial, train_tune, horizon, val_tune)
+    try:
+        train_tune = train_scaled[:-val_size]
+        val_tune = train_scaled[-val_size:]
+    except Exception as e:
+        print(f"Error processing {window_config['type']}: {str(e)}")
+        return
 
-    # Optuna study for hyperparameter optimization
+    # Optuna optimization
     study = optuna.create_study(sampler=sampler, direction="minimize")
-    study.optimize(optuna_objective, n_trials=N_TRIALS, timeout=600)
+    study.optimize(
+        lambda trial: objective(trial, train_tune, horizon, val_tune),
+        n_trials=N_TRIALS,
+        timeout=600
+    )
 
+    # Extract best parameters
     best_params = study.best_params
-    print("\n[Optuna] Best hyperparameters:", best_params)
+    print(f"\n[{window_config['type']}] Best params:", best_params)
 
-    # Final model training with best params
+    # Model training with best parameters
     look_back = best_params['look_back']
     units = best_params['units']
     lr = best_params['learning_rate']
     batch_size = best_params['batch_size']
     epochs = best_params['epochs']
 
-    # Create datasets for final training/testing
+    # Create final datasets
     X_train, y_train = create_dataset_regression(train_scaled, look_back, horizon)
     X_test, y_test = create_dataset_regression(test_scaled, look_back, horizon)
 
-    # If no data available, skip
     if len(X_train) == 0 or len(X_test) == 0:
-        print("[Regression] Not enough data for these params.")
+        print(f"{window_config['type']} - insufficient data after processing")
         return
 
+    # Reshape for LSTM
     X_train = X_train.reshape((X_train.shape[0], look_back, 1))
     X_test = X_test.reshape((X_test.shape[0], look_back, 1))
 
-    # Build and fit model
+    # Build and train final model
     model = build_regression_model(look_back, units, horizon, lr)
-    history = model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, verbose=0)
-    final_epochs_run = len(history.history['loss'])
+    history = model.fit(X_train, y_train,
+                        epochs=epochs,
+                        batch_size=batch_size,
+                        verbose=0)
+    final_epochs = len(history.history['loss'])
 
-    # Predict on train/test sets
-    y_train_pred_s = model.predict(X_train, verbose=0)
-    y_test_pred_s = model.predict(X_test, verbose=0)
+    # Generate predictions
+    y_train_pred = model.predict(X_train, verbose=0)
+    y_test_pred = model.predict(X_test, verbose=0)
 
-    # Reshape for inverse scaling
-    y_train_s = y_train.flatten().reshape(-1, 1)
-    y_test_s = y_test.flatten().reshape(-1, 1)
-    y_train_pred_s = y_train_pred_s.flatten().reshape(-1, 1)
-    y_test_pred_s = y_test_pred_s.flatten().reshape(-1, 1)
+    # Inverse scaling transformations
+    y_train_inv = scaler.inverse_transform(y_train.reshape(-1, 1)).flatten()
+    y_test_inv = scaler.inverse_transform(y_test.reshape(-1, 1)).flatten()
+    y_train_pred_inv = scaler.inverse_transform(y_train_pred.reshape(-1, 1)).flatten()
+    y_test_pred_inv = scaler.inverse_transform(y_test_pred.reshape(-1, 1)).flatten()
 
-    # Inverse transform
-    y_train_inv = scaler.inverse_transform(y_train_s).flatten()
-    y_test_inv = scaler.inverse_transform(y_test_s).flatten()
-    y_train_pred_inv = scaler.inverse_transform(y_train_pred_s).flatten()
-    y_test_pred_inv = scaler.inverse_transform(y_test_pred_s).flatten()
-
-    # Calculate metrics
+    # Calculate evaluation metrics
     mse = mean_squared_error(y_test_inv, y_test_pred_inv)
     mae = mean_absolute_error(y_test_inv, y_test_pred_inv)
     rmse = np.sqrt(mse)
     r2 = r2_score(y_test_inv, y_test_pred_inv)
 
-    # Prediction intervals (using train residuals standard deviation)
-    residuals_train = y_train_inv - y_train_pred_inv
-    sigma = np.std(residuals_train)
-    z = 1.96  # 95% confidence
-    lower_bound = y_test_pred_inv - z * sigma
-    upper_bound = y_test_pred_inv + z * sigma
+    # Calculate prediction intervals
+    train_residuals = y_train_inv - y_train_pred_inv
+    sigma = np.std(train_residuals)
+    lower_bound = y_test_pred_inv - 1.96 * sigma
+    upper_bound = y_test_pred_inv + 1.96 * sigma
     coverage = np.mean((y_test_inv >= lower_bound) & (y_test_inv <= upper_bound)) * 100
     interval_width = np.mean(upper_bound - lower_bound)
 
-    # Store results globally
+    # Store results
     regressor_results.append({
+        'type': window_config['type'],
         'forecast_horizon': horizon,
         'look_back': look_back,
         'units': units,
         'batch_size': batch_size,
         'learning_rate': lr,
-        'epochs_run': final_epochs_run,
+        'epochs_run': final_epochs,
         'mse': mse,
         'mae': mae,
         'rmse': rmse,
@@ -236,50 +235,56 @@ def optimize_and_train_regression(train_scaled: np.ndarray,
         'interval_width': interval_width
     })
 
-    # Print final metrics
-    print(
-        f"[Regression] (h={horizon}) MSE={mse:.6f}, MAE={mae:.6f}, "
-        f"RMSE={rmse:.6f}, R2={r2:.6f}, Coverage={coverage:.2f}%, "
-        f"IntervalWidth={interval_width:.6f}, Epochs={final_epochs_run}"
-    )
+    # Print window results
+    print(f"[{window_config['type']}] Metrics:")
+    print(f"MSE: {mse:.6f}, MAE: {mae:.6f}, RMSE: {rmse:.6f}")
+    print(f"R²: {r2:.4f}, Coverage: {coverage:.2f}%, Width: {interval_width:.6f}")
 
 
 def main() -> None:
-    """
-    Main function to load data, split, scale, run optimization,
-    and save final results to CSV.
-    """
-    # Load dataset
+    """Main execution function"""
+    # Load and prepare data
     df = load_data(DATA_PATH)
     data = df['Close'].values
 
-    # Split data
-    train_raw, test_raw = split_data(data, 0.8)
+    # Generate window configurations
+    windows = generate_sliding_windows(len(data))
 
-    # Scale data
-    scaler, train_scaled, test_scaled = scale_data(train_raw, test_raw)
-
-    print("\nCurrent results file path:", REGRESSION_CSV_PATH)
-    print("=== Regression Optimization and Training ===")
+    print("\nStarting sliding window validation...")
+    print(f"Results will be saved to: {REGRESSION_CSV_PATH}")
     start_time = time.time()
 
-    # Iterate over forecast horizons
-    for horizon in FORECAST_HORIZONS_REG:
-        optimize_and_train_regression(train_scaled, test_scaled, scaler, horizon)
+    # Process each window
+    for window in windows:
+        print(f"\n=== Processing {window['type']} ===")
+        print(f"Training range: {window['train'][0] * 100}%-{window['train'][1] * 100}%")
+        print(f"Testing range: {window['test'][0] * 100}%-{window['test'][1] * 100}%")
 
-    end_time = time.time()
-    print(f"[Results] Done in {end_time - start_time:.2f}s.")
+        for horizon in FORECAST_HORIZONS_REG:
+            process_window(window, data, horizon)
 
-    # Save results if available
+    # Calculate average metrics
     if regressor_results:
         df_results = pd.DataFrame(regressor_results)
+        numeric_cols = df_results.select_dtypes(include=np.number).columns
+        avg_row = df_results[numeric_cols].mean().to_dict()
+        avg_row['type'] = 'average'
+        regressor_results.append(avg_row)
+
+    # Save final results
+    if regressor_results:
+        df_final = pd.DataFrame(regressor_results)
+        df_final = df_final[['type'] + [col for col in df_final if col != 'type']]
         os.makedirs(os.path.dirname(REGRESSION_CSV_PATH), exist_ok=True)
-        df_results.to_csv(REGRESSION_CSV_PATH, index=False)
-        print(f"[Results] Saved to {REGRESSION_CSV_PATH}")
+        df_final.to_csv(REGRESSION_CSV_PATH, index=False)
+
+        print("\nFinal results:")
+        print(df_final[['type', 'mse', 'mae', 'rmse', 'r2_score']].to_string(index=False))
     else:
-        print("[Results] No results to save.")
+        print("\nNo valid results generated")
+
+    print(f"\nTotal execution time: {time.time() - start_time:.2f} seconds")
 
 
-# Run the main function
 if __name__ == "__main__":
     main()
