@@ -17,7 +17,7 @@ from tensorflow.keras.layers import LSTM, Dense, Input
 def main():
     # Define file paths and hyperparameters
     DATA_PATH = './../../../../data/raw/USDEUR=X_max_1d.csv'
-    REGRESSION_CSV_PATH = './results/regression_results1.csv'
+    REGRESSION_CSV_PATH = './results/regression_results3.csv'
     FORECAST_HORIZONS_REG = [1]
 
     hyperparams = {
@@ -51,6 +51,7 @@ def main():
     save_results_regression(results, REGRESSION_CSV_PATH)
     print(f"\nTotal execution time: {time.time() - start_time:.2f} seconds")
 
+
 # ==============================================================================
 # Global Configuration and Hyperparameters
 # ==============================================================================
@@ -73,6 +74,7 @@ def set_global_config(seed=42):
     tf.random.set_seed(seed)
     tf.keras.utils.set_random_seed(seed)
 
+
 # ==============================================================================
 # Data Loading and Preprocessing
 # ==============================================================================
@@ -80,6 +82,35 @@ def load_data(data_path):
     df = pd.read_csv(data_path, index_col='Date', parse_dates=True)
     df = df.replace([np.inf, -np.inf], np.nan).dropna()
     return df['Close'].values
+
+
+# ==============================================================================
+# Log Transformer Class (mimicking scikit-learn's API)
+# ==============================================================================
+class LogTransformer:
+    def fit(self, data):
+        return self
+    def transform(self, data):
+        return np.log(data)
+    def fit_transform(self, data):
+        return np.log(data)
+    def inverse_transform(self, data):
+        return np.exp(data)
+
+# ==============================================================================
+# Log Transformation for train and test data
+# ==============================================================================
+def apply_log_transformation(train_data, test_data):
+    transformer = LogTransformer()
+    train_log = transformer.fit_transform(train_data)
+    test_log = transformer.transform(test_data)
+    return train_log, test_log, transformer
+
+# ==============================================================================
+# Inverse Log Transformation
+# ==============================================================================
+def inverse_log_transformation(log_data, transformer):
+    return transformer.inverse_transform(log_data)
 
 
 # ==============================================================================
@@ -105,6 +136,7 @@ def create_dataset_regression(dataset, look_back=1, forecast_horizon=1):
         y.append(y_seq)
     return np.array(X), np.array(y)
 
+
 # ==============================================================================
 # Model Building for Regression
 # ==============================================================================
@@ -117,18 +149,19 @@ def build_regression_model(look_back, units, forecast_horizon, learning_rate):
     model.compile(loss='mse')
     return model
 
+
 # ==============================================================================
 # Training and Evaluation (Regression)
 # ==============================================================================
 def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
-                                  forecast_horizon, window_type, hyperparams):
+                                  forecast_horizon, window_type, hyperparams, scaler):
     look_back = hyperparams['look_back']
     units = hyperparams['units']
     batch_size = hyperparams['batch_size']
     learning_rate = hyperparams['learning_rate']
     epochs = hyperparams['epochs']
 
-    # Create regression datasets
+    # Create regression datasets (these are in scaled space)
     X_train, y_train = create_dataset_regression(train_data, look_back, forecast_horizon)
     X_test, y_test = create_dataset_regression(test_data, look_back, forecast_horizon)
 
@@ -145,19 +178,26 @@ def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
     history = model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, verbose=0)
     epochs_run = len(history.history['loss'])
 
-    # Predict and compute evaluation metrics
+    # Predict in scaled space
     y_pred_test = model.predict(X_test, verbose=0)
-    y_test_flat = y_test.flatten()
-    y_pred_test_flat = y_pred_test.flatten()
 
-    mse = mean_squared_error(y_test_flat, y_pred_test_flat)
-    mae = mean_absolute_error(y_test_flat, y_pred_test_flat)
-    rmse = np.sqrt(mse)
+    # Inverse transform predictions and true targets back to original scale
+    y_pred_test_orig = inverse_log_transformation(y_pred_test, scaler)
+    y_test_orig = inverse_log_transformation(y_test, scaler)
+
+    # Compute evaluation metrics on original scale
+    y_test_flat = y_test_orig.flatten()
+    y_pred_test_flat = y_pred_test_orig.flatten()
+    mse_val = mean_squared_error(y_test_flat, y_pred_test_flat)
+    mae_val = mean_absolute_error(y_test_flat, y_pred_test_flat)
+    rmse_val = np.sqrt(mse_val)
     r2 = r2_score(y_test_flat, y_pred_test_flat)
 
-    # Calculate prediction intervals using training residuals
+    # Calculate prediction intervals using training residuals (on original scale)
     y_train_pred = model.predict(X_train, verbose=0)
-    residuals = y_train.flatten() - y_train_pred.flatten()
+    y_train_orig = inverse_log_transformation(y_train, scaler)
+    y_train_pred_orig = inverse_log_transformation(y_train_pred, scaler)
+    residuals = y_train_orig.flatten() - y_train_pred_orig.flatten()
     sigma = np.std(residuals)
     z = 1.96  # 95% confidence interval
     lower_bound = y_pred_test_flat - z * sigma
@@ -173,9 +213,9 @@ def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
         'batch_size': batch_size,
         'learning_rate': learning_rate,
         'epochs_run': epochs_run,
-        'mse': mse,
-        'mae': mae,
-        'rmse': rmse,
+        'mse': mse_val,
+        'mae': mae_val,
+        'rmse': rmse_val,
         'r2_score': r2,
         'coverage_probability (%)': coverage,
         'interval_width': interval_width
@@ -183,17 +223,17 @@ def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
 
     print(
         f"[Regression - {window_type}] Final metrics (horizon={forecast_horizon}): "
-        f"MSE={mse:.9f}, MAE={mae:.9f}, RMSE={rmse:.9f}, R2={r2:.9f}, "
+        f"MSE={mse_val:.9f}, MAE={mae_val:.9f}, RMSE={rmse_val:.9f}, R2={r2:.9f}, "
         f"Coverage={coverage:.2f}%, IntervalWidth={interval_width:.5f}, "
         f"EpochsRun={epochs_run}"
     )
     return result
 
+
 # ==============================================================================
 # Processing Each Sliding Window (Regression)
 # ==============================================================================
-def process_window_regression(window_config, data, forecast_horizon,
-                              hyperparams):
+def process_window_regression(window_config, data, forecast_horizon, hyperparams):
     n_samples = len(data)
     train_start = int(window_config['train'][0] * n_samples)
     train_end = int(window_config['train'][1] * n_samples)
@@ -207,11 +247,16 @@ def process_window_regression(window_config, data, forecast_horizon,
         print(f"Skipping {window_config['type']} - insufficient data")
         return None
 
-    # Reshape data for LSTM input: (samples, look_back, features)
+    # Reshape data for LSTM input: (samples, 1)
     train_data = train_raw.reshape(-1, 1)
     test_data = test_raw.reshape(-1, 1)
-    return train_and_evaluate_regression(train_data, test_data, forecast_horizon,
-                                         window_config['type'], hyperparams)
+
+    # Apply MinMax scaling to both training and testing data
+    train_data_scaled, test_data_scaled, scaler = apply_log_transformation(train_data, test_data)
+
+    return train_and_evaluate_regression(train_data_scaled, test_data_scaled, forecast_horizon,
+                                         window_config['type'], hyperparams, scaler)
+
 
 # ==============================================================================
 # Save Results (Regression)
@@ -231,45 +276,6 @@ def save_results_regression(results, csv_path):
     else:
         print("[Results] No regression results to save.")
 
-# ==============================================================================
-# Main Entry Point
-# ==============================================================================
-def main():
-    # Define file paths and hyperparameters
-    DATA_PATH = './../../../../data/raw/USDEUR=X_max_1d.csv'
-    REGRESSION_CSV_PATH = './results/regression_results1.csv'
-    FORECAST_HORIZONS_REG = [1]
-
-    hyperparams = {
-        'look_back': 60,
-        'units': 128,
-        'batch_size': 64,
-        'learning_rate': 1e-3,
-        'epochs': 10
-    }
-
-    # Configure TensorFlow and set seeds
-    configure_tf()
-    set_global_config(seed=42)
-
-    # Load the data and generate sliding window configurations
-    data = load_data(DATA_PATH)
-    windows = generate_sliding_windows()
-
-    results = []
-    start_time = time.time()
-    for window in windows:
-        print(f"\n=== Processing {window['type']} ===")
-        print(f"Training range: {window['train'][0] * 100:.1f}% - {window['train'][1] * 100:.1f}%")
-        print(f"Testing range: {window['test'][0] * 100:.1f}% - {window['test'][1] * 100:.1f}%")
-        for horizon in FORECAST_HORIZONS_REG:
-            result = process_window_regression(window, data, horizon, hyperparams)
-            if result is not None:
-                results.append(result)
-
-    # Save all regression results
-    save_results_regression(results, REGRESSION_CSV_PATH)
-    print(f"\nTotal execution time: {time.time() - start_time:.2f} seconds")
 
 if __name__ == "__main__":
     main()

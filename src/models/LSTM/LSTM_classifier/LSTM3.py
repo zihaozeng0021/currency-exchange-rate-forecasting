@@ -17,7 +17,7 @@ from tensorflow.keras.layers import LSTM, Dense, Input
 def main():
     # Define file paths and hyperparameters
     DATA_PATH = './../../../../data/raw/USDEUR=X_max_1d.csv'
-    CLASSIFICATION_CSV_PATH = './results/classification_results1.csv'
+    CLASSIFICATION_CSV_PATH = './results/classification_results3.csv'
     FORECAST_HORIZONS_CLF = [1]
 
     hyperparams = {
@@ -52,6 +52,7 @@ def main():
     save_results(results, CLASSIFICATION_CSV_PATH)
     print(f"\nTotal execution time: {time.time() - start_time:.2f} seconds")
 
+
 # ==============================================================================
 # Global Configuration and Hyperparameters
 # ==============================================================================
@@ -82,6 +83,27 @@ def load_data(data_path):
     df = pd.read_csv(data_path, index_col='Date', parse_dates=True)
     df = df.replace([np.inf, -np.inf], np.nan).dropna()
     return df['Close'].values
+
+
+# ==============================================================================
+# Log Transformer Class (mimicking scikit-learn's API)
+# ==============================================================================
+class LogTransformer:
+    def fit(self, data):
+        return self
+    def transform(self, data):
+        return np.log(data)
+    def fit_transform(self, data):
+        return np.log(data)
+
+# ==============================================================================
+# Log Transformation for train and test data
+# ==============================================================================
+def apply_log_transformation(train_data, test_data):
+    transformer = LogTransformer()
+    train_log = transformer.fit_transform(train_data)
+    test_log = transformer.transform(test_data)
+    return train_log, test_log, transformer
 
 
 # ==============================================================================
@@ -221,10 +243,15 @@ def process_window_classification(window_config, data, forecast_horizon, hyperpa
         print(f"Skipping {window_config['type']} - insufficient data")
         return None
 
-    # Reshape data for LSTM input: (samples, look_back, features)
+    # Reshape data for LSTM input: (samples, 1)
     train_data = train_raw.reshape(-1, 1)
     test_data = test_raw.reshape(-1, 1)
-    return optimize_and_train_classification(train_data, test_data, forecast_horizon, window_config['type'], hyperparams)
+
+    # Apply MinMax scaling to both training and testing data
+    train_data_scaled, test_data_scaled, _ = apply_log_transformation(train_data, test_data)
+
+    return optimize_and_train_classification(train_data_scaled, test_data_scaled, forecast_horizon,
+                                             window_config['type'], hyperparams)
 
 
 # ==============================================================================
