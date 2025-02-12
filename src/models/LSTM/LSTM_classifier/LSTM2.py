@@ -6,6 +6,7 @@ import warnings
 import time
 
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.preprocessing import MinMaxScaler
 
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
@@ -17,7 +18,7 @@ from tensorflow.keras.layers import LSTM, Dense, Input
 def main():
     # Define file paths and hyperparameters
     DATA_PATH = './../../../../data/raw/USDEUR=X_max_1d.csv'
-    CLASSIFICATION_CSV_PATH = './results/classification_results1.csv'
+    CLASSIFICATION_CSV_PATH = './results/classification_results2.csv'
     FORECAST_HORIZONS_CLF = [1]
 
     hyperparams = {
@@ -52,16 +53,20 @@ def main():
     save_results(results, CLASSIFICATION_CSV_PATH)
     print(f"\nTotal execution time: {time.time() - start_time:.2f} seconds")
 
+
 # ==============================================================================
 # Global Configuration and Hyperparameters
 # ==============================================================================
 def configure_tf():
+    os.environ['TF_DETERMINISTIC_OPS'] = '1'
+    os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
+
+    # Existing GPU check
     gpu_devices = tf.config.list_physical_devices('GPU')
     if gpu_devices:
         print(f"GPU is available. GPU detected: {gpu_devices}")
     else:
         print("No GPU found. Running on CPU.")
-    os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 
 def set_global_config(seed=42):
@@ -69,6 +74,7 @@ def set_global_config(seed=42):
     random.seed(seed)
     np.random.seed(seed)
     tf.random.set_seed(seed)
+    tf.keras.utils.set_random_seed(seed)
 
 
 # ==============================================================================
@@ -78,6 +84,16 @@ def load_data(data_path):
     df = pd.read_csv(data_path, index_col='Date', parse_dates=True)
     df = df.replace([np.inf, -np.inf], np.nan).dropna()
     return df['Close'].values
+
+
+# ==============================================================================
+# MinMax Scaling for train and test data
+# ==============================================================================
+def apply_minmax_scaling(train_data, test_data):
+    scaler = MinMaxScaler()
+    train_scaled = scaler.fit_transform(train_data)
+    test_scaled = scaler.transform(test_data)
+    return train_scaled, test_scaled, scaler
 
 
 # ==============================================================================
@@ -217,10 +233,15 @@ def process_window_classification(window_config, data, forecast_horizon, hyperpa
         print(f"Skipping {window_config['type']} - insufficient data")
         return None
 
-    # Reshape data for LSTM input: (samples, look_back, features)
+    # Reshape data for LSTM input: (samples, 1)
     train_data = train_raw.reshape(-1, 1)
     test_data = test_raw.reshape(-1, 1)
-    return optimize_and_train_classification(train_data, test_data, forecast_horizon, window_config['type'], hyperparams)
+
+    # Apply MinMax scaling to both training and testing data
+    train_data_scaled, test_data_scaled, _ = apply_minmax_scaling(train_data, test_data)
+
+    return optimize_and_train_classification(train_data_scaled, test_data_scaled, forecast_horizon,
+                                             window_config['type'], hyperparams)
 
 
 # ==============================================================================

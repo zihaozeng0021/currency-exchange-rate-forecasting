@@ -56,12 +56,15 @@ def main():
 # Global Configuration and Hyperparameters
 # ==============================================================================
 def configure_tf():
+    os.environ['TF_DETERMINISTIC_OPS'] = '1'
+    os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
+
+    # Existing GPU check
     gpu_devices = tf.config.list_physical_devices('GPU')
     if gpu_devices:
         print(f"GPU is available. GPU detected: {gpu_devices}")
     else:
         print("No GPU found. Running on CPU.")
-    os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 
 def set_global_config(seed=42):
@@ -69,6 +72,7 @@ def set_global_config(seed=42):
     random.seed(seed)
     np.random.seed(seed)
     tf.random.set_seed(seed)
+    tf.keras.utils.set_random_seed(seed)
 
 
 # ==============================================================================
