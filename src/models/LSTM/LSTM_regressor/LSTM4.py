@@ -55,7 +55,6 @@ def main():
 # Global Configuration and Hyperparameters
 # ==============================================================================
 def configure_tf():
-    """Check for GPU availability and set environment variables."""
     gpu_devices = tf.config.list_physical_devices('GPU')
     if gpu_devices:
         print(f"GPU is available. GPU detected: {gpu_devices}")
@@ -64,7 +63,6 @@ def configure_tf():
     os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 def set_global_config(seed=42):
-    """Set random seeds and suppress warnings for reproducibility."""
     warnings.filterwarnings('ignore')
     random.seed(seed)
     np.random.seed(seed)
@@ -74,9 +72,6 @@ def set_global_config(seed=42):
 # Data Loading and Preprocessing
 # ==============================================================================
 def load_data(data_path):
-    """
-    Load CSV data, clean infinities/NaNs, and return the 'Close' price as a numpy array.
-    """
     df = pd.read_csv(data_path, index_col='Date', parse_dates=True)
     df = df.replace([np.inf, -np.inf], np.nan).dropna()
     return df['Close'].values
@@ -86,10 +81,6 @@ def load_data(data_path):
 # Sliding Windows
 # ==============================================================================
 def generate_sliding_windows():
-    """
-    Generate sliding windows configurations based on data proportions.
-    Returns a list of dictionaries for each window.
-    """
     return [
         {'type': 'window_1', 'train': (0.0, 0.3), 'test': (0.3, 0.4)},
         {'type': 'window_2', 'train': (0.3, 0.6), 'test': (0.6, 0.7)},
@@ -101,18 +92,6 @@ def generate_sliding_windows():
 # Dataset Creation for Regression
 # ==============================================================================
 def create_dataset_regression(dataset, look_back=1, forecast_horizon=1):
-    """
-    Create sequences (X) and corresponding targets (y) for LSTM training.
-
-    Parameters:
-      dataset: numpy array of the feature values.
-      look_back: Number of past time steps to include.
-      forecast_horizon: Number of future time steps to predict.
-
-    Returns:
-      X: Array of input sequences of shape (samples, look_back)
-      y: Array of targets of shape (samples, forecast_horizon)
-    """
     X, y = [], []
     for i in range(len(dataset) - look_back - forecast_horizon + 1):
         X_seq = dataset[i: i + look_back, 0]
@@ -124,19 +103,7 @@ def create_dataset_regression(dataset, look_back=1, forecast_horizon=1):
 # ==============================================================================
 # Model Building for Regression
 # ==============================================================================
-def build_regression_model(look_back: int, units: int, forecast_horizon: int, learning_rate: float) -> Sequential:
-    """
-    Build a simple LSTM model for regression.
-
-    Parameters:
-      look_back: Number of past time steps used as input.
-      units: Number of units in the LSTM layer.
-      forecast_horizon: Number of future steps to predict.
-      learning_rate: Learning rate for the optimizer.
-
-    Returns:
-      Compiled LSTM model.
-    """
+def build_regression_model(look_back, units, forecast_horizon, learning_rate):
     model = Sequential([
         Input(shape=(look_back, 1)),
         LSTM(units, return_sequences=False),
@@ -149,20 +116,7 @@ def build_regression_model(look_back: int, units: int, forecast_horizon: int, le
 # Training and Evaluation (Regression)
 # ==============================================================================
 def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
-                                  forecast_horizon: int, window_type: str, hyperparams: dict) -> dict:
-    """
-    Train and evaluate the regression model for a specific sliding window.
-
-    Parameters:
-      train_data: Training data.
-      test_data: Testing data.
-      forecast_horizon: Forecast horizon.
-      window_type: Label for the current sliding window.
-      hyperparams: Dictionary of hyperparameters.
-
-    Returns:
-      Dictionary of evaluation metrics and hyperparameters for the window.
-    """
+                                  forecast_horizon, window_type, hyperparams):
     look_back = hyperparams['look_back']
     units = hyperparams['units']
     batch_size = hyperparams['batch_size']
@@ -233,17 +187,8 @@ def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
 # ==============================================================================
 # Processing Each Sliding Window (Regression)
 # ==============================================================================
-def process_window_regression(window_config: dict, data: np.ndarray, forecast_horizon: int,
-                              hyperparams: dict) -> dict:
-    """
-    For a given sliding window configuration, this function:
-      - Extracts the training and testing data from the full dataset,
-      - Uses raw data (without scaling),
-      - Runs the training and evaluation for regression.
-
-    Returns:
-      A dictionary of regression metrics for the window.
-    """
+def process_window_regression(window_config, data, forecast_horizon,
+                              hyperparams):
     n_samples = len(data)
     train_start = int(window_config['train'][0] * n_samples)
     train_end = int(window_config['train'][1] * n_samples)
@@ -266,8 +211,7 @@ def process_window_regression(window_config: dict, data: np.ndarray, forecast_ho
 # ==============================================================================
 # Save Results (Regression)
 # ==============================================================================
-def save_results_regression(results: list, csv_path: str):
-    """Save regression results to CSV, including an extra row with average metrics."""
+def save_results_regression(results, csv_path):
     if results:
         results_df = pd.DataFrame(results)
         numeric_cols = results_df.select_dtypes(include=np.number).columns

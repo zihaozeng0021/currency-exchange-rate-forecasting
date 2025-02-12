@@ -56,7 +56,6 @@ def main():
 # Global Configuration and Hyperparameters
 # ==============================================================================
 def configure_tf():
-    """Check for GPU availability and set environment variables."""
     gpu_devices = tf.config.list_physical_devices('GPU')
     if gpu_devices:
         print(f"GPU is available. GPU detected: {gpu_devices}")
@@ -66,7 +65,6 @@ def configure_tf():
 
 
 def set_global_config(seed=42):
-    """Set random seeds and suppress warnings for reproducibility."""
     warnings.filterwarnings('ignore')
     random.seed(seed)
     np.random.seed(seed)
@@ -77,9 +75,6 @@ def set_global_config(seed=42):
 # Data Loading and Preprocessing
 # ==============================================================================
 def load_data(data_path):
-    """
-    Load CSV data, clean infinities/NaNs, and return the 'Close' price as a numpy array.
-    """
     df = pd.read_csv(data_path, index_col='Date', parse_dates=True)
     df = df.replace([np.inf, -np.inf], np.nan).dropna()
     return df['Close'].values
@@ -89,10 +84,6 @@ def load_data(data_path):
 # Sliding Windows
 # ==============================================================================
 def generate_sliding_windows():
-    """
-    Generate sliding windows configurations based on data proportions.
-    Returns a list of dictionaries for each window.
-    """
     return [
         {'type': 'window_1', 'train': (0.0, 0.3), 'test': (0.3, 0.4)},
         {'type': 'window_2', 'train': (0.3, 0.6), 'test': (0.6, 0.7)},
@@ -104,11 +95,6 @@ def generate_sliding_windows():
 # Dataset Creation for Classification
 # ==============================================================================
 def create_dataset_classification(dataset, look_back=1, forecast_horizon=1, threshold=0):
-    """
-    Create time-series sequences for classification.
-    For each sequence, the label is determined by the percentage change between the last value in the input
-    sequence and the future values. A change greater than the threshold is labeled as 1, otherwise 0.
-    """
     X, y = [], []
     for i in range(len(dataset) - look_back - forecast_horizon + 1):
         X_seq = dataset[i: i + look_back, 0]
@@ -124,14 +110,10 @@ def create_dataset_classification(dataset, look_back=1, forecast_horizon=1, thre
 # Model Building for Classification
 # ==============================================================================
 def build_classification_model(look_back, units, forecast_horizon, learning_rate):
-    """
-    Build a simple LSTM model for binary classification.
-    Note: The final Dense layer uses a sigmoid activation function to produce probabilities.
-    """
     model = Sequential([
         Input(shape=(look_back, 1)),
         LSTM(units, return_sequences=False),
-        Dense(forecast_horizon)
+        Dense(forecast_horizon, activation='sigmoid')
     ])
     model.compile(loss='binary_crossentropy')
     return model
@@ -141,7 +123,6 @@ def build_classification_model(look_back, units, forecast_horizon, learning_rate
 # Evaluation Metrics Calculation (Classification)
 # ==============================================================================
 def evaluate_metrics(y_true, y_pred, forecast_horizon):
-    """Compute accuracy, precision, recall, f1 score, and specificity across the forecast horizon."""
     accuracies, precisions, recalls, f1s, specifics = [], [], [], [], []
     for i in range(forecast_horizon):
         y_true_i = y_true[:, i]
@@ -168,13 +149,6 @@ def evaluate_metrics(y_true, y_pred, forecast_horizon):
 # Training and Evaluation (Classification)
 # ==============================================================================
 def optimize_and_train_classification(train_data, test_data, forecast_horizon, window_type, hyperparams):
-    """
-    For the given training and testing data from one sliding window, this function:
-      - Creates the classification dataset using a sliding look-back.
-      - Builds and trains the LSTM model.
-      - Evaluates the model using a fixed threshold (0.5) for binarization.
-    Returns a dictionary containing the evaluation metrics and hyperparameters.
-    """
     look_back = hyperparams['look_back']
     units = hyperparams['units']
     batch_size = hyperparams['batch_size']
@@ -198,7 +172,7 @@ def optimize_and_train_classification(train_data, test_data, forecast_horizon, w
 
     # Get prediction probabilities and binarize using threshold=0.5
     test_probs = model.predict(X_test, verbose=0)
-    threshold = 0
+    threshold = 0.5
     preds = (test_probs > threshold).astype(int)
 
     avg_acc, avg_prec, avg_rec, avg_f1, avg_spec = evaluate_metrics(y_test, preds, forecast_horizon)
@@ -230,10 +204,6 @@ def optimize_and_train_classification(train_data, test_data, forecast_horizon, w
 # Processing Each Sliding Window (Classification)
 # ==============================================================================
 def process_window_classification(window_config, data, forecast_horizon, hyperparams):
-    """
-    Extract the corresponding training and testing subsets from the full dataset,
-    reshape the data, and run classification training & evaluation.
-    """
     n_samples = len(data)
     train_start = int(window_config['train'][0] * n_samples)
     train_end = int(window_config['train'][1] * n_samples)
@@ -257,7 +227,6 @@ def process_window_classification(window_config, data, forecast_horizon, hyperpa
 # Save Results (Classification)
 # ==============================================================================
 def save_results(results, csv_path):
-    """Save the list of results dictionaries to a CSV file including an average row."""
     if results:
         results_df = pd.DataFrame(results)
         numeric_cols = results_df.select_dtypes(include=np.number).columns
