@@ -6,15 +6,54 @@ import warnings
 import time
 
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from sklearn.preprocessing import MinMaxScaler
 
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Input
 
-# ------------------------------
-# Configuration Functions
-# ------------------------------
+# ==============================================================================
+# Main Entry Point
+# ==============================================================================
+def main():
+    # Define file paths and hyperparameters
+    DATA_PATH = './../../../../data/raw/USDEUR=X_max_1d.csv'
+    REGRESSION_CSV_PATH = './results/regression_results1.csv'
+    FORECAST_HORIZONS_REG = [1]
+
+    hyperparams = {
+        'look_back': 60,
+        'units': 128,
+        'batch_size': 64,
+        'learning_rate': 1e-3,
+        'epochs': 10
+    }
+
+    # Configure TensorFlow and set seeds
+    configure_tf()
+    set_global_config(seed=42)
+
+    # Load the data and generate sliding window configurations
+    data = load_data(DATA_PATH)
+    windows = generate_sliding_windows()
+
+    results = []
+    start_time = time.time()
+    for window in windows:
+        print(f"\n=== Processing {window['type']} ===")
+        print(f"Training range: {window['train'][0] * 100:.1f}% - {window['train'][1] * 100:.1f}%")
+        print(f"Testing range: {window['test'][0] * 100:.1f}% - {window['test'][1] * 100:.1f}%")
+        for horizon in FORECAST_HORIZONS_REG:
+            result = process_window_regression(window, data, horizon, hyperparams)
+            if result is not None:
+                results.append(result)
+
+    # Save all regression results
+    save_results_regression(results, REGRESSION_CSV_PATH)
+    print(f"\nTotal execution time: {time.time() - start_time:.2f} seconds")
+
+# ==============================================================================
+# Global Configuration and Hyperparameters
+# ==============================================================================
 def configure_tf():
     """Check for GPU availability and set environment variables."""
     gpu_devices = tf.config.list_physical_devices('GPU')
@@ -31,9 +70,9 @@ def set_global_config(seed=42):
     np.random.seed(seed)
     tf.random.set_seed(seed)
 
-# ------------------------------
-# Data Loading and Scaling
-# ------------------------------
+# ==============================================================================
+# Data Loading and Preprocessing
+# ==============================================================================
 def load_data(data_path):
     """
     Load CSV data, clean infinities/NaNs, and return the 'Close' price as a numpy array.
@@ -42,20 +81,14 @@ def load_data(data_path):
     df = df.replace([np.inf, -np.inf], np.nan).dropna()
     return df['Close'].values
 
-def scale_data(train_raw, test_raw):
-    """Scale train and test data independently using MinMaxScaler."""
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    train_scaled = scaler.fit_transform(train_raw.reshape(-1, 1))
-    test_scaled = scaler.transform(test_raw.reshape(-1, 1))
-    return train_scaled, test_scaled
 
-# ------------------------------
-# Sliding Windows Generation
-# ------------------------------
+# ==============================================================================
+# Sliding Windows
+# ==============================================================================
 def generate_sliding_windows():
     """
-    Generate sliding window configurations based on data proportions.
-    Each dictionary specifies the training and testing splits.
+    Generate sliding windows configurations based on data proportions.
+    Returns a list of dictionaries for each window.
     """
     return [
         {'type': 'window_1', 'train': (0.0, 0.3), 'test': (0.3, 0.4)},
@@ -63,15 +96,16 @@ def generate_sliding_windows():
         {'type': 'window_3', 'train': (0.6, 0.9), 'test': (0.9, 1.0)}
     ]
 
-# ------------------------------
+
+# ==============================================================================
 # Dataset Creation for Regression
-# ------------------------------
-def create_dataset_regression(dataset: np.ndarray, look_back: int = 1, forecast_horizon: int = 1) -> tuple:
+# ==============================================================================
+def create_dataset_regression(dataset, look_back=1, forecast_horizon=1):
     """
     Create sequences (X) and corresponding targets (y) for LSTM training.
 
     Parameters:
-      dataset: Scaled numpy array of the feature values.
+      dataset: numpy array of the feature values.
       look_back: Number of past time steps to include.
       forecast_horizon: Number of future time steps to predict.
 
@@ -87,9 +121,9 @@ def create_dataset_regression(dataset: np.ndarray, look_back: int = 1, forecast_
         y.append(y_seq)
     return np.array(X), np.array(y)
 
-# ------------------------------
+# ==============================================================================
 # Model Building for Regression
-# ------------------------------
+# ==============================================================================
 def build_regression_model(look_back: int, units: int, forecast_horizon: int, learning_rate: float) -> Sequential:
     """
     Build a simple LSTM model for regression.
@@ -108,21 +142,20 @@ def build_regression_model(look_back: int, units: int, forecast_horizon: int, le
         LSTM(units, return_sequences=False),
         Dense(forecast_horizon)
     ])
-    optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
-    model.compile(loss='mse', optimizer=optimizer)
+    model.compile(loss='mse')
     return model
 
-# ------------------------------
-# Training and Evaluation
-# ------------------------------
+# ==============================================================================
+# Training and Evaluation (Regression)
+# ==============================================================================
 def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
                                   forecast_horizon: int, window_type: str, hyperparams: dict) -> dict:
     """
     Train and evaluate the regression model for a specific sliding window.
 
     Parameters:
-      train_data: Scaled training data.
-      test_data: Scaled testing data.
+      train_data: Training data.
+      test_data: Testing data.
       forecast_horizon: Forecast horizon.
       window_type: Label for the current sliding window.
       hyperparams: Dictionary of hyperparameters.
@@ -144,7 +177,7 @@ def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
         print(f"[Regression - {window_type}] Insufficient data for the given parameters.")
         return None
 
-    # Reshape for LSTM: [samples, look_back, features]
+    # Reshape data for LSTM input: (samples, look_back, features)
     X_train = X_train.reshape((X_train.shape[0], look_back, 1))
     X_test = X_test.reshape((X_test.shape[0], look_back, 1))
 
@@ -197,15 +230,15 @@ def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
     )
     return result
 
-# ------------------------------
-# Process Each Sliding Window for Regression
-# ------------------------------
+# ==============================================================================
+# Processing Each Sliding Window (Regression)
+# ==============================================================================
 def process_window_regression(window_config: dict, data: np.ndarray, forecast_horizon: int,
                               hyperparams: dict) -> dict:
     """
     For a given sliding window configuration, this function:
       - Extracts the training and testing data from the full dataset,
-      - Applies independent scaling,
+      - Uses raw data (without scaling),
       - Runs the training and evaluation for regression.
 
     Returns:
@@ -224,13 +257,15 @@ def process_window_regression(window_config: dict, data: np.ndarray, forecast_ho
         print(f"Skipping {window_config['type']} - insufficient data")
         return None
 
-    train_scaled, test_scaled = scale_data(train_raw, test_raw)
-    return train_and_evaluate_regression(train_scaled, test_scaled, forecast_horizon,
+    # Reshape data for LSTM input: (samples, look_back, features)
+    train_data = train_raw.reshape(-1, 1)
+    test_data = test_raw.reshape(-1, 1)
+    return train_and_evaluate_regression(train_data, test_data, forecast_horizon,
                                          window_config['type'], hyperparams)
 
-# ------------------------------
-# Save Results
-# ------------------------------
+# ==============================================================================
+# Save Results (Regression)
+# ==============================================================================
 def save_results_regression(results: list, csv_path: str):
     """Save regression results to CSV, including an extra row with average metrics."""
     if results:
@@ -247,9 +282,9 @@ def save_results_regression(results: list, csv_path: str):
     else:
         print("[Results] No regression results to save.")
 
-# ------------------------------
+# ==============================================================================
 # Main Entry Point
-# ------------------------------
+# ==============================================================================
 def main():
     # Define file paths and hyperparameters
     DATA_PATH = './../../../../data/raw/USDEUR=X_max_1d.csv'
