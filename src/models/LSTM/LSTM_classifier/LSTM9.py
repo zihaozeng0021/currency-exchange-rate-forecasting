@@ -6,11 +6,11 @@ import warnings
 import time
 
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
-from sklearn.preprocessing import MinMaxScaler
 
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Input
+
 
 # ==============================================================================
 # Main Entry Point
@@ -18,7 +18,7 @@ from tensorflow.keras.layers import LSTM, Dense, Input
 def main():
     # Define file paths and hyperparameters
     DATA_PATH = './../../../../data/raw/USDEUR=X_max_1d.csv'
-    CLASSIFICATION_CSV_PATH = './results/classification_results5.csv'
+    CLASSIFICATION_CSV_PATH = './results/classification_results9.csv'
     FORECAST_HORIZONS_CLF = [1]
 
     hyperparams = {
@@ -33,7 +33,7 @@ def main():
     configure_tf()
     set_global_config(seed=42)
 
-    # Load data and generate sliding windows
+    # Load data and apply smoothing
     data = load_data(DATA_PATH)
     data = smooth_data(data, window_size=5)
     windows = generate_sliding_windows()
@@ -88,19 +88,36 @@ def load_data(data_path):
 
 
 def smooth_data(data, window_size=5):
-    kernel = np.ones(window_size) / window_size
-    smoothed_data = np.convolve(data, kernel, mode='same')
-    return smoothed_data
+    alpha = 2 / (window_size + 1)
+    ema = np.zeros_like(data)
+    ema[0] = data[0]
+    for i in range(1, len(data)):
+        ema[i] = alpha * data[i] + (1 - alpha) * ema[i - 1]
+    return ema
 
 
 # ==============================================================================
-# MinMax Scaling for train and test data
+# Log Transformer Class (mimicking scikit-learn's API)
 # ==============================================================================
-def apply_minmax_scaling(train_data, test_data):
-    scaler = MinMaxScaler()
-    train_scaled = scaler.fit_transform(train_data)
-    test_scaled = scaler.transform(test_data)
-    return train_scaled, test_scaled, scaler
+class LogTransformer:
+    def fit(self, data):
+        return self
+
+    def transform(self, data):
+        return np.log(data)
+
+    def fit_transform(self, data):
+        return np.log(data)
+
+
+# ==============================================================================
+# Log Transformation for train and test data
+# ==============================================================================
+def apply_log_transformation(train_data, test_data):
+    transformer = LogTransformer()
+    train_log = transformer.fit_transform(train_data)
+    test_log = transformer.transform(test_data)
+    return train_log, test_log, transformer
 
 
 # ==============================================================================
@@ -244,8 +261,8 @@ def process_window_classification(window_config, data, forecast_horizon, hyperpa
     train_data = train_raw.reshape(-1, 1)
     test_data = test_raw.reshape(-1, 1)
 
-    # Apply MinMax scaling to both training and testing data
-    train_data_scaled, test_data_scaled, _ = apply_minmax_scaling(train_data, test_data)
+    # Apply log transformation to both training and testing data
+    train_data_scaled, test_data_scaled, _ = apply_log_transformation(train_data, test_data)
 
     return optimize_and_train_classification(train_data_scaled, test_data_scaled, forecast_horizon,
                                              window_config['type'], hyperparams)
