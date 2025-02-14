@@ -1,6 +1,6 @@
 ```mermaid
 graph TD
-    1[1, one layer LSTM] --> 2[2, + MinMax Scaling]
+    1[1, one layer LSTM, linear activation, mse loss, RMSprop optimizer] --> 2[2, + MinMax Scaling]
     1 --> 3[3, + Log transformation]
     1 --> 4[4, + Z-score Scaling]
     
