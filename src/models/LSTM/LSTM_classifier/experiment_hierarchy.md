@@ -16,6 +16,14 @@ graph TD
     11 --> 15[15, + binary_focal_crossentropy loss]
     11 --> 16[16, + poisson loss]
     11 --> 17[17, + kl_divergence loss]
+    15 --> 18[18, + SGD optimizer]
+    15 --> 19[19, + RMSprop optimizer, default on Keras, currently the baseline]
+    15 --> 20[20, + Adam optimizer]
+    15 --> 21[21, + Adamax optimizer]
+    15 --> 22[22, + Nadam optimizer]
+    15 --> 23[23, + Adamgrad optimizer]
+    15 --> 24[24, + Adadelta optimizer]
+    15 --> 25[25, + Ftrl optimizer]
     
     
     
@@ -28,6 +36,9 @@ graph TD
     
     classDef brightRed fill:#FF0000,stroke:#333,stroke-width:2px;
     class 14,15,16,17 brightRed;
+    
+    classDef brightYellow fill:#FFFF00,stroke:#333,stroke-width:2px;
+    class 18,19,20,21,22,23,24,25 brightYellow;
     
     
 ```
