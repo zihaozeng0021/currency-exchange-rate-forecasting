@@ -18,7 +18,7 @@ from tensorflow.keras.layers import LSTM, Dense, Input
 def main():
     # Define file paths and hyperparameters
     DATA_PATH = './../../../../data/raw/USDEUR=X_max_1d.csv'
-    REGRESSION_CSV_PATH = './results/regression_results4.csv'
+    REGRESSION_CSV_PATH = './results/regression_results6.csv'
     FORECAST_HORIZONS_REG = [1]
 
     hyperparams = {
@@ -133,7 +133,7 @@ def build_regression_model(look_back, units, forecast_horizon, learning_rate):
     model = Sequential([
         Input(shape=(look_back, 1)),
         LSTM(units, return_sequences=False),
-        Dense(forecast_horizon)
+        Dense(forecast_horizon, activation='exponential')
     ])
     model.compile(loss='mse')
     return model
