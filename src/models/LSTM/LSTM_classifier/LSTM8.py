@@ -8,8 +8,8 @@ import time
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 
 import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Input
+from keras.models import Sequential
+from keras.layers import LSTM, Dense, Input
 
 
 # ==============================================================================

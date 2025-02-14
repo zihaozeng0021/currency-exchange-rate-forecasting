@@ -8,8 +8,8 @@ import time
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Input
+from keras.models import Sequential
+from keras.layers import LSTM, Dense, Input
 
 # ==============================================================================
 # Main Entry Point
