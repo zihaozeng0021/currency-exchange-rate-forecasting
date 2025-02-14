@@ -12,6 +12,14 @@ graph TD
     5 --> 11[11, + huber loss]
     5 --> 12[12, + logcosh loss]
     5 --> 13[13, + mean_squared_logarithmic_error loss]
+    9 --> 14[14, + SGD optimizer]
+    9 --> 15[15, + RMSprop optimizer, default on Keras, currently the baseline]
+    9 --> 16[16, + Adam optimizer]
+    9 --> 17[17, + Adamax optimizer]
+    9 --> 18[18, + Nadam optimizer]
+    9 --> 19[19, + Adamgrad optimizer]
+    9 --> 20[20, + Adadelta optimizer]
+    9 --> 21[21, + Ftrl optimizer]
     
     
     classDef brightBlue fill:#00BFFF,stroke:#333,stroke-width:2px;
@@ -22,5 +30,8 @@ graph TD
     
     classDef brightRed fill:#FF0000,stroke:#333,stroke-width:2px;
     class 8,9,10,11,12,13 brightRed;
+    
+    classDef brightYellow fill:#FFFF00,stroke:#333,stroke-width:2px;
+    class 14,15,16,17,18,19,20,21 brightYellow;
     
 ```
