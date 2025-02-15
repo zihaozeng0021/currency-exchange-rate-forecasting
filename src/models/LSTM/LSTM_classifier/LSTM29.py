@@ -5,7 +5,7 @@ import random
 import warnings
 import time
 
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, precision_recall_curve
 from sklearn.preprocessing import MinMaxScaler
 
 import tensorflow as tf
@@ -18,7 +18,7 @@ from keras.layers import LSTM, Dense, Input
 def main():
     # Define file paths and hyperparameters
     DATA_PATH = './../../../../data/raw/USDEUR=X_max_1d.csv'
-    CLASSIFICATION_CSV_PATH = './results/classification_results22.csv'
+    CLASSIFICATION_CSV_PATH = './results/classification_results29.csv'
     FORECAST_HORIZONS_CLF = [1]
 
     hyperparams = {
@@ -40,15 +40,27 @@ def main():
 
     # Process each window and collect results
     results = []
+    best_threshold = None
     start_time = time.time()
     for window in windows:
         print(f"\n=== Processing {window['type']} ===")
         print(f"Training range: {window['train'][0] * 100:.1f}% - {window['train'][1] * 100:.1f}%")
         print(f"Testing range: {window['test'][0] * 100:.1f}% - {window['test'][1] * 100:.1f}%")
         for horizon in FORECAST_HORIZONS_CLF:
-            result = process_window_classification(window, data, horizon, hyperparams)
-            if result is not None:
-                results.append(result)
+            # For the validation window, perform PR curve–based threshold tuning.
+            if window['type'] == 'validation':
+                result = process_window_classification(window, data, horizon, hyperparams, global_threshold=None)
+                if result is not None:
+                    results.append(result)
+                    best_threshold = result['threshold']
+                    print(f"==> Best threshold tuned on validation window: {best_threshold:.5f}")
+            else:
+                if best_threshold is None:
+                    print(f"Skipping {window['type']} because no threshold was tuned from validation.")
+                    continue
+                result = process_window_classification(window, data, horizon, hyperparams, global_threshold=best_threshold)
+                if result is not None:
+                    results.append(result)
 
     # Save the results to CSV
     save_results(results, CLASSIFICATION_CSV_PATH)
@@ -173,7 +185,7 @@ def evaluate_metrics(y_true, y_pred, forecast_horizon):
 # ==============================================================================
 # Training and Evaluation (Classification)
 # ==============================================================================
-def optimize_and_train_classification(train_data, test_data, forecast_horizon, window_type, hyperparams):
+def optimize_and_train_classification(train_data, test_data, forecast_horizon, window_type, hyperparams, grid_threshold=None):
     look_back = hyperparams['look_back']
     units = hyperparams['units']
     batch_size = hyperparams['batch_size']
@@ -195,10 +207,30 @@ def optimize_and_train_classification(train_data, test_data, forecast_horizon, w
     history = model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, verbose=0)
     epochs_run = len(history.history['loss'])
 
-    # Get prediction probabilities and binarize using threshold=0.5
+    # Get prediction probabilities
     test_probs = model.predict(X_test, verbose=0)
-    threshold = 0.5
-    preds = (test_probs > threshold).astype(int)
+
+    # --------------------------------------------------
+    # Precision-Recall Curve–Based Threshold Tuning on Validation
+    # --------------------------------------------------
+    if grid_threshold is None:
+        # Compute the PR curve (flatten arrays, assuming forecast_horizon == 1)
+        precision_vals, recall_vals, pr_thresholds = precision_recall_curve(y_test.flatten(), test_probs.flatten())
+        best_acc = -1
+        best_threshold = None
+        best_preds = None
+        for t in pr_thresholds:
+            preds_temp = (test_probs > t).astype(int)
+            acc_temp, _, _, _, _ = evaluate_metrics(y_test, preds_temp, forecast_horizon)
+            if acc_temp > best_acc:
+                best_acc = acc_temp
+                best_threshold = t
+                best_preds = preds_temp
+        threshold_used = best_threshold
+        preds = best_preds
+    else:
+        threshold_used = grid_threshold
+        preds = (test_probs > grid_threshold).astype(int)
 
     avg_acc, avg_prec, avg_rec, avg_f1, avg_spec = evaluate_metrics(y_test, preds, forecast_horizon)
 
@@ -210,7 +242,7 @@ def optimize_and_train_classification(train_data, test_data, forecast_horizon, w
         'batch_size': batch_size,
         'learning_rate': learning_rate,
         'epochs_run': epochs_run,
-        'threshold': threshold,
+        'threshold': threshold_used,
         'accuracy': avg_acc,
         'precision': avg_prec,
         'recall': avg_rec,
@@ -220,7 +252,8 @@ def optimize_and_train_classification(train_data, test_data, forecast_horizon, w
     print(
         f"[Classification - {window_type}] Final metrics (horizon={forecast_horizon}): "
         f"Accuracy={avg_acc:.5f}, Precision={avg_prec:.5f}, Recall={avg_rec:.5f}, "
-        f"F1={avg_f1:.5f}, Specificity={avg_spec:.5f}, EpochsRun={epochs_run}"
+        f"F1={avg_f1:.5f}, Specificity={avg_spec:.5f}, EpochsRun={epochs_run}, "
+        f"Threshold={threshold_used:.2f}"
     )
     return result
 
@@ -228,7 +261,7 @@ def optimize_and_train_classification(train_data, test_data, forecast_horizon, w
 # ==============================================================================
 # Processing Each Sliding Window (Classification)
 # ==============================================================================
-def process_window_classification(window_config, data, forecast_horizon, hyperparams):
+def process_window_classification(window_config, data, forecast_horizon, hyperparams, global_threshold=None):
     n_samples = len(data)
     train_start = int(window_config['train'][0] * n_samples)
     train_end = int(window_config['train'][1] * n_samples)
@@ -249,8 +282,10 @@ def process_window_classification(window_config, data, forecast_horizon, hyperpa
     # Apply MinMax scaling to both training and testing data
     train_data_scaled, test_data_scaled, _ = apply_minmax_scaling(train_data, test_data)
 
-    return optimize_and_train_classification(train_data_scaled, test_data_scaled, forecast_horizon,
-                                             window_config['type'], hyperparams)
+    return optimize_and_train_classification(
+        train_data_scaled, test_data_scaled, forecast_horizon,
+        window_config['type'], hyperparams, grid_threshold=global_threshold
+    )
 
 
 # ==============================================================================
