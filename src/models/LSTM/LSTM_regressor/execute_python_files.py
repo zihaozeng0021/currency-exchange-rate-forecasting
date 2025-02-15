@@ -60,6 +60,13 @@ def run_python_file(file_path):
 
 if __name__ == "__main__":
     paths = [
-        '.'
+        'LSTM14.py',
+        'LSTM15.py',
+        'LSTM16.py',
+        'LSTM17.py',
+        'LSTM18.py',
+        'LSTM19.py',
+        'LSTM20.py',
+        'LSTM21.py'
     ]
     run_python_files(paths)

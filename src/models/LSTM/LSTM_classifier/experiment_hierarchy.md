@@ -24,7 +24,7 @@ graph TD
     15 --> 23[23, + Adamgrad optimizer]
     15 --> 24[24, + Adadelta optimizer]
     15 --> 25[25, + Ftrl optimizer]
-    19 --> 26[Best so far]
+    22 --> 26[Best so far]
     
     
     

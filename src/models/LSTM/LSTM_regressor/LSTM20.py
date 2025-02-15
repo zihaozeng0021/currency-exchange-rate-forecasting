@@ -139,7 +139,7 @@ def build_regression_model(look_back, units, forecast_horizon, learning_rate):
         Dense(forecast_horizon, activation='linear')
     ])
     optimizer = tf.keras.optimizers.Adadelta(learning_rate=learning_rate)
-    model.compile(loss='mean_absolute_error', optimizer=optimizer)
+    model.compile(loss='mse', optimizer=optimizer)
     return model
 
 
