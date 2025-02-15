@@ -24,7 +24,12 @@ graph TD
     15 --> 23[23, + Adamgrad optimizer]
     15 --> 24[24, + Adadelta optimizer]
     15 --> 25[25, + Ftrl optimizer]
-    22 --> 26[Best so far]
+    22 --> 26[26, + Fixed threshold, currently the baseline]
+    22 --> 27[27, + Grid search for threshold]
+    22 --> 28[28, + ROC curve]
+    22 --> 29[29, + Precision-Recall curve]
+    22 --> 30[30, + Cost-Sensitive Thresholding]
+    22 --> 31[31, + Adaptive Thresholding]
     
     
     
