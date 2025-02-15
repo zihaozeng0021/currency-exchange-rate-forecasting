@@ -20,7 +20,11 @@ graph TD
     8 --> 19[19, + Adamgrad optimizer]
     8 --> 20[20, + Adadelta optimizer]
     8 --> 21[21, + Ftrl optimizer]
-    15 --> 22[Best so far]
+    15 --> 22[22, + Grid search]
+    15 --> 23[23, + Random search]
+    15 --> 24[24, + Bayesian optimization]
+    15 --> 25[25, + Genetic algorithm]
+    15 --> 26[26, + Reinforcement learning]
     
     
     classDef brightBlue fill:#00BFFF,stroke:#333,stroke-width:2px;
@@ -34,5 +38,8 @@ graph TD
     
     classDef brightYellow fill:#FFFF00,stroke:#333,stroke-width:2px;
     class 14,15,16,17,18,19,20,21 brightYellow;
+    
+    classDef brightPurple fill:#800080,stroke:#333,stroke-width:2px;
+    class 22,23,24,25,26 brightPurple;
     
 ```
