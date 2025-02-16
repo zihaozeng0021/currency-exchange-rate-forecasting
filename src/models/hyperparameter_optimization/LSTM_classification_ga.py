@@ -17,8 +17,8 @@ from keras.layers import LSTM, Dense, Input
 # ==============================================================================
 def main():
     # Define file paths and hyperparameters
-    DATA_PATH = '../../../../data/raw/USDEUR=X_max_1d.csv'
-    CLASSIFICATION_CSV_PATH = '../../LSTM/LSTM_classifier/results/classification_results28.csv'
+    DATA_PATH = '../../../data/raw/USDEUR=X_max_1d.csv'
+    CLASSIFICATION_CSV_PATH = 'results/attempt.csv'
     FORECAST_HORIZONS_CLF = [1]
 
     hyperparams = {
@@ -118,12 +118,12 @@ def apply_minmax_scaling(train_data, test_data):
 # ==============================================================================
 def generate_sliding_windows():
     return [
-        {'type': 'validation', 'train': (0.0, 0.16), 'test': (0.16, 0.2)},
-        {'type': 'window_1', 'train': (0.16, 0.32), 'test': (0.32, 0.36)},
-        {'type': 'window_2', 'train': (0.32, 0.48), 'test': (0.48, 0.52)},
-        {'type': 'window_3', 'train': (0.48, 0.64), 'test': (0.64, 0.68)},
-        {'type': 'window_4', 'train': (0.64, 0.8), 'test': (0.8, 0.84)},
-        {'type': 'window_5', 'train': (0.8, 0.96), 'test': (0.96, 1.0)}
+        {'type': 'window_1', 'train': (0.0, 0.12), 'validate': (0.12, 0.16), 'test': (0.16, 0.2)},
+        {'type': 'window_2', 'train': (0.16, 0.28), 'validate': (0.28, 0.32), 'test': (0.32, 0.36)},
+        {'type': 'window_3', 'train': (0.32, 0.44), 'validate': (0.44, 0.48), 'test': (0.48, 0.52)},
+        {'type': 'window_4', 'train': (0.48, 0.60), 'validate': (0.60, 0.64), 'test': (0.64, 0.68)},
+        {'type': 'window_5', 'train': (0.64, 0.76), 'validate': (0.76, 0.80), 'test': (0.8, 0.84)},
+        {'type': 'window_6', 'train': (0.8, 0.92), 'validate': (0.92, 0.96), 'test': (0.96, 1.0)}
     ]
 
 
