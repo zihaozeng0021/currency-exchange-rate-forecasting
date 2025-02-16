@@ -30,11 +30,7 @@ graph TD
     22 --> 29[29, + Precision-Recall curve]
     22 --> 30[30, + Cost-Sensitive Thresholding]
     22 --> 31[31, + Adaptive Thresholding]
-    28 --> 32[32, + Grid search]
-    28 --> 33[33, + Random search]
-    28 --> 34[34, + Bayesian optimization]
-    28 --> 35[35, + Genetic algorithm]
-    28 --> 36[36, + Reinforcement learning] 
+    28 --> 32[Best so far]
     
     
     
@@ -53,9 +49,7 @@ graph TD
     
     classDef brightOrange fill:#FFA500,stroke:#333,stroke-width:2px;
     class 26,27,28,29,30,31 brightOrange;
-    
-    classDef brightPurple fill:#800080,stroke:#333,stroke-width:2px;
-    class 32,33,34,35,36 brightPurple;
+
     
     
 ```

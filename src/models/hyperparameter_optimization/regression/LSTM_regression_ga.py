@@ -17,8 +17,8 @@ from keras.layers import LSTM, Dense, Input
 # ==============================================================================
 def main():
     # Define file paths and hyperparameters
-    DATA_PATH = './../../../../data/raw/USDEUR=X_max_1d.csv'
-    REGRESSION_CSV_PATH = './results/regression_results15.csv'
+    DATA_PATH = '../../../../data/raw/USDEUR=X_max_1d.csv'
+    REGRESSION_CSV_PATH = '../../LSTM/LSTM_regressor/results/regression_results15.csv'
     FORECAST_HORIZONS_REG = [1]
 
     hyperparams = {

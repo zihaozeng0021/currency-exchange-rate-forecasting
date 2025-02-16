@@ -4,6 +4,7 @@ import os
 import random
 import warnings
 import time
+import itertools
 
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, roc_curve
 from sklearn.preprocessing import MinMaxScaler
@@ -12,22 +13,15 @@ import tensorflow as tf
 from keras.models import Sequential
 from keras.layers import LSTM, Dense, Input
 
+
 # ==============================================================================
 # Main Entry Point
 # ==============================================================================
 def main():
     # Define file paths and hyperparameters
-    DATA_PATH = './../../../../data/raw/USDEUR=X_max_1d.csv'
-    CLASSIFICATION_CSV_PATH = './results/classification_results28.csv'
+    DATA_PATH = '../../../../data/raw/USDEUR=X_max_1d.csv'
+    CLASSIFICATION_CSV_PATH = './results/classification_results32.csv'
     FORECAST_HORIZONS_CLF = [1]
-
-    hyperparams = {
-        'look_back': 60,
-        'units': 128,
-        'batch_size': 64,
-        'learning_rate': 1e-3,
-        'epochs': 10
-    }
 
     # Configure TensorFlow and set seeds
     configure_tf()
@@ -38,33 +32,91 @@ def main():
     data = smooth_data(data)
     windows = generate_sliding_windows()
 
-    # Process each window and collect results
-    results = []
-    best_threshold = None
+    # Define grid search space for hyperparameters
+    search_space = {
+        'epochs': [10, 20, 30, 40, 50],
+        'look_back': [30, 60, 90, 120],
+        'units': [50, 100, 150, 200],
+        'batch_size': [16, 32, 48, 64, 80, 96, 112, 128],
+        'learning_rate': [0.0001, 0.005, 0.01]
+    }
+
     start_time = time.time()
+    # Grid search on the validation window to choose best hyperparameters
+    forecast_horizon = FORECAST_HORIZONS_CLF[0]
+    validation_window = next((w for w in windows if w['type'] == 'validation'), None)
+    if validation_window is None:
+        print("Validation window not found!")
+        return
+
+    best_hyperparams, best_threshold, best_result = grid_search_on_validation(
+        data, validation_window, forecast_horizon, search_space
+    )
+
+    if best_result is None:
+        print("No valid hyperparameter combination found on the validation window.")
+        return
+
+    results = [best_result]
+
+    # Apply the best hyperparameters and tuned threshold to the other windows
     for window in windows:
-        print(f"\n=== Processing {window['type']} ===")
-        print(f"Training range: {window['train'][0] * 100:.1f}% - {window['train'][1] * 100:.1f}%")
-        print(f"Testing range: {window['test'][0] * 100:.1f}% - {window['test'][1] * 100:.1f}%")
-        for horizon in FORECAST_HORIZONS_CLF:
-            # For the validation window, perform ROC curve–based threshold tuning.
-            if window['type'] == 'validation':
-                result = process_window_classification(window, data, horizon, hyperparams, global_threshold=None)
-                if result is not None:
-                    results.append(result)
-                    best_threshold = result['threshold']
-                    print(f"==> Best threshold tuned on validation window: {best_threshold:.2f}")
-            else:
-                if best_threshold is None:
-                    print(f"Skipping {window['type']} because no threshold was tuned from validation.")
-                    continue
-                result = process_window_classification(window, data, horizon, hyperparams, global_threshold=best_threshold)
-                if result is not None:
-                    results.append(result)
+        if window['type'] != 'validation':
+            print(f"\n=== Processing {window['type']} with best hyperparameters ===")
+            result = process_window_classification(
+                window, data, forecast_horizon, best_hyperparams, global_threshold=best_threshold
+            )
+            if result is not None:
+                results.append(result)
 
     # Save the results to CSV
     save_results(results, CLASSIFICATION_CSV_PATH)
     print(f"\nTotal execution time: {time.time() - start_time:.2f} seconds")
+
+# ==============================================================================
+# Grid Search on Validation Window
+# ==============================================================================
+def grid_search_on_validation(data, validation_window, forecast_horizon, search_space):
+    best_result = None
+    best_hyperparams = None
+    best_threshold = None
+
+    # Generate all combinations from the search space
+    keys = list(search_space.keys())
+    combinations = list(itertools.product(*[search_space[k] for k in keys]))
+
+    # Shuffle the combinations so they are not tried in order
+    random.shuffle(combinations)
+
+    print("\nStarting grid search on validation window...")
+    search_start_time = time.time()
+    for comb in combinations:
+        # Stop grid search after one hour
+        if time.time() - search_start_time > 3600:
+            print("Hyperparameter tuning stopped after one hour.")
+            break
+
+        current_hyperparams = dict(zip(keys, comb))
+        #print(f"\nTesting hyperparameters: {current_hyperparams}")
+
+        result = process_window_classification(
+            validation_window, data, forecast_horizon, current_hyperparams, global_threshold=None
+        )
+        if result is not None:
+            #print(f"Result: Accuracy={result['accuracy']:.5f}, Threshold={result['threshold']:.2f}")
+            if (best_result is None) or (result['accuracy'] > best_result['accuracy']):
+                print(f"New best hyperparameters found: {current_hyperparams}"
+                      f"\nResults: Accuracy={result['accuracy']:.5f}, Threshold={result['threshold']:.2f}")
+                best_result = result
+                best_hyperparams = current_hyperparams
+                best_threshold = result['threshold']
+
+    if best_result is not None:
+        print("\nBest hyperparameters found:")
+        print(f"{best_hyperparams} with accuracy={best_result['accuracy']:.5f} and threshold={best_threshold:.2f}")
+    else:
+        print("Grid search failed to find any valid hyperparameter combination.")
+    return best_hyperparams, best_threshold, best_result
 
 
 # ==============================================================================
@@ -185,7 +237,8 @@ def evaluate_metrics(y_true, y_pred, forecast_horizon):
 # ==============================================================================
 # Training and Evaluation (Classification)
 # ==============================================================================
-def optimize_and_train_classification(train_data, test_data, forecast_horizon, window_type, hyperparams, grid_threshold=None):
+def optimize_and_train_classification(train_data, test_data, forecast_horizon, window_type, hyperparams,
+                                      grid_threshold=None):
     look_back = hyperparams['look_back']
     units = hyperparams['units']
     batch_size = hyperparams['batch_size']
