@@ -111,14 +111,13 @@ def apply_log_transformation(train_data, test_data):
 # ==============================================================================
 def generate_sliding_windows():
     return [
-        {'type': 'validation', 'train': (0.0, 0.16), 'test': (0.16, 0.2)},
-        {'type': 'window_1', 'train': (0.16, 0.32), 'test': (0.32, 0.36)},
-        {'type': 'window_2', 'train': (0.32, 0.48), 'test': (0.48, 0.52)},
-        {'type': 'window_3', 'train': (0.48, 0.64), 'test': (0.64, 0.68)},
-        {'type': 'window_4', 'train': (0.64, 0.8), 'test': (0.8, 0.84)},
-        {'type': 'window_5', 'train': (0.8, 0.96), 'test': (0.96, 1.0)}
+        {'type': 'window_1', 'train': (0.0, 0.16), 'test': (0.16, 0.2)},
+        {'type': 'window_2', 'train': (0.16, 0.32), 'test': (0.32, 0.36)},
+        {'type': 'window_3', 'train': (0.32, 0.48), 'test': (0.48, 0.52)},
+        {'type': 'window_4', 'train': (0.48, 0.64), 'test': (0.64, 0.68)},
+        {'type': 'window_5', 'train': (0.64, 0.8), 'test': (0.8, 0.84)},
+        {'type': 'window_6', 'train': (0.8, 0.96), 'test': (0.96, 1.0)}
     ]
-
 
 # ==============================================================================
 # Dataset Creation for Classification
