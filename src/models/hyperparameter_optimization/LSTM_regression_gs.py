@@ -4,6 +4,7 @@ import os
 import random
 import warnings
 import time
+import itertools
 
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.preprocessing import StandardScaler
@@ -12,21 +13,23 @@ import tensorflow as tf
 from keras.models import Sequential
 from keras.layers import LSTM, Dense, Input
 
+
 # ==============================================================================
 # Main Entry Point
 # ==============================================================================
 def main():
     # Define file paths and hyperparameters
     DATA_PATH = '../../../data/raw/USDEUR=X_max_1d.csv'
-    REGRESSION_CSV_PATH = 'results/attempt.csv'
+    REGRESSION_CSV_PATH = 'results/LSTM_regression_gs.csv'
     FORECAST_HORIZONS_REG = [1]
 
-    hyperparams = {
-        'look_back': 60,
-        'units': 128,
-        'batch_size': 64,
-        'learning_rate': 1e-3,
-        'epochs': 10
+    # Define search space for grid search
+    search_space = {
+        'epochs': [10, 20, 30, 40, 50],
+        'look_back': [30, 60, 90, 120],
+        'units': [50, 100, 150, 200],
+        'batch_size': [16, 32, 48, 64, 80, 96, 112, 128],
+        'learning_rate': [0.0001, 0.005, 0.01]
     }
 
     # Configure TensorFlow and set seeds
@@ -42,9 +45,10 @@ def main():
     for window in windows:
         print(f"\n=== Processing {window['type']} ===")
         print(f"Training range: {window['train'][0] * 100:.1f}% - {window['train'][1] * 100:.1f}%")
+        print(f"Validation range: {window['validate'][0] * 100:.1f}% - {window['validate'][1] * 100:.1f}%")
         print(f"Testing range: {window['test'][0] * 100:.1f}% - {window['test'][1] * 100:.1f}%")
         for horizon in FORECAST_HORIZONS_REG:
-            result = process_window_regression(window, data, horizon, hyperparams)
+            result = process_window_regression(window, data, horizon, search_space)
             if result is not None:
                 results.append(result)
 
@@ -60,7 +64,6 @@ def configure_tf():
     os.environ['TF_DETERMINISTIC_OPS'] = '1'
     os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
 
-    # Existing GPU check
     gpu_devices = tf.config.list_physical_devices('GPU')
     if gpu_devices:
         print(f"GPU is available. GPU detected: {gpu_devices}")
@@ -154,7 +157,7 @@ def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
     learning_rate = hyperparams['learning_rate']
     epochs = hyperparams['epochs']
 
-    # Create regression datasets (these are in scaled space)
+    # Create regression datasets in scaled space
     X_train, y_train = create_dataset_regression(train_data, look_back, forecast_horizon)
     X_test, y_test = create_dataset_regression(test_data, look_back, forecast_horizon)
 
@@ -224,31 +227,109 @@ def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
 
 
 # ==============================================================================
+# Grid Search for Hyperparameters using the Validation Set
+# ==============================================================================
+def grid_search_hyperparameters(train_scaled, validate_scaled, scaler, forecast_horizon, search_space, time_limit=600):
+    keys = list(search_space.keys())
+    all_combinations = list(itertools.product(*(search_space[k] for k in keys)))
+    random.shuffle(all_combinations)
+
+    best_mse = float('inf')
+    best_hp = None
+    start_time = time.time()
+
+    for combo in all_combinations:
+        if time.time() - start_time > time_limit:
+            print("Time limit reached during grid search.")
+            break
+
+        candidate = dict(zip(keys, combo))
+        print(f"Evaluating candidate: {candidate}")
+
+        # Create training and validation datasets using candidate's look_back
+        X_train, y_train = create_dataset_regression(train_scaled, candidate['look_back'], forecast_horizon)
+        X_val, y_val = create_dataset_regression(validate_scaled, candidate['look_back'], forecast_horizon)
+        if len(X_train) == 0 or len(X_val) == 0:
+            print(f"Skipping candidate {candidate} due to insufficient data.")
+            continue
+
+        X_train = X_train.reshape((X_train.shape[0], candidate['look_back'], 1))
+        X_val = X_val.reshape((X_val.shape[0], candidate['look_back'], 1))
+
+        model = build_regression_model(candidate['look_back'], candidate['units'], forecast_horizon,
+                                       candidate['learning_rate'])
+        model.fit(X_train, y_train, epochs=candidate['epochs'], batch_size=candidate['batch_size'], verbose=0)
+
+        y_val_pred = model.predict(X_val, verbose=0)
+        # Inverse transform using the scaler fitted on the training data
+        y_val_pred_orig = inverse_standard_scaling(y_val_pred, scaler)
+        y_val_orig = inverse_standard_scaling(y_val, scaler)
+        mse_val = mean_squared_error(y_val_orig.flatten(), y_val_pred_orig.flatten())
+        print(f"Candidate {candidate} achieved validation MSE: {mse_val:.9f}")
+
+        if mse_val < best_mse:
+            best_mse = mse_val
+            best_hp = candidate
+
+    if best_hp is None:
+        print("No valid hyperparameter combination found, using default hyperparameters.")
+        best_hp = {
+            'epochs': 10,
+            'look_back': 60,
+            'units': 128,
+            'batch_size': 64,
+            'learning_rate': 1e-3
+        }
+    print(f"Best hyperparameters: {best_hp} with validation MSE: {best_mse:.9f}")
+    return best_hp
+
+
+# ==============================================================================
 # Processing Each Sliding Window (Regression)
 # ==============================================================================
-def process_window_regression(window_config, data, forecast_horizon, hyperparams):
+def process_window_regression(window_config, data, forecast_horizon, search_space):
     n_samples = len(data)
     train_start = int(window_config['train'][0] * n_samples)
     train_end = int(window_config['train'][1] * n_samples)
+    validate_start = int(window_config['validate'][0] * n_samples)
+    validate_end = int(window_config['validate'][1] * n_samples)
     test_start = int(window_config['test'][0] * n_samples)
     test_end = int(window_config['test'][1] * n_samples)
 
     train_raw = data[train_start:train_end]
+    validate_raw = data[validate_start:validate_end]
     test_raw = data[test_start:test_end]
 
-    if len(train_raw) < hyperparams['look_back'] or len(test_raw) < hyperparams['look_back']:
+    if len(train_raw) < 10 or len(validate_raw) < 10 or len(test_raw) < 10:
         print(f"Skipping {window_config['type']} - insufficient data")
         return None
 
     # Reshape data for LSTM input: (samples, 1)
-    train_data = train_raw.reshape(-1, 1)
-    test_data = test_raw.reshape(-1, 1)
+    train_raw = train_raw.reshape(-1, 1)
+    validate_raw = validate_raw.reshape(-1, 1)
+    test_raw = test_raw.reshape(-1, 1)
 
-    # Apply MinMax scaling to both training and testing data
-    train_data_scaled, test_data_scaled, scaler = apply_standard_scaling(train_data, test_data)
+    # Scale using training data only (for grid search)
+    scaler_train = StandardScaler()
+    train_scaled = scaler_train.fit_transform(train_raw)
+    validate_scaled = scaler_train.transform(validate_raw)
 
-    return train_and_evaluate_regression(train_data_scaled, test_data_scaled, forecast_horizon,
-                                         window_config['type'], hyperparams, scaler)
+    # Perform grid search on the validation set
+    best_hp = grid_search_hyperparameters(train_scaled, validate_scaled, scaler_train, forecast_horizon, search_space,
+                                          time_limit=600)
+
+    # Combine training and validation for final model training
+    train_val_raw = np.concatenate([train_raw, validate_raw], axis=0)
+    scaler_final = StandardScaler()
+    train_val_scaled = scaler_final.fit_transform(train_val_raw)
+    test_scaled = scaler_final.transform(test_raw)
+
+    # Train and evaluate the final model using the best hyperparameters on train+validate and test on the test set.
+    result = train_and_evaluate_regression(train_val_scaled, test_scaled, forecast_horizon, window_config['type'],
+                                           best_hp, scaler_final)
+    if result is not None:
+        result['best_hyperparameters'] = best_hp
+    return result
 
 
 # ==============================================================================
