@@ -12,21 +12,25 @@ import tensorflow as tf
 from keras.models import Sequential
 from keras.layers import LSTM, Dense, Input
 
+import optuna
+
+
 # ==============================================================================
 # Main Entry Point
 # ==============================================================================
 def main():
     # Define file paths and hyperparameters
     DATA_PATH = '../../../data/raw/USDEUR=X_max_1d.csv'
-    REGRESSION_CSV_PATH = 'results/attempt.csv'
+    REGRESSION_CSV_PATH = 'results/LSTM_regression_bo.csv'
     FORECAST_HORIZONS_REG = [1]
 
-    hyperparams = {
-        'look_back': 60,
-        'units': 128,
-        'batch_size': 64,
-        'learning_rate': 1e-3,
-        'epochs': 10
+
+    search_space = {
+        'epochs': (10, 50),
+        'look_back': (30, 120),
+        'units': (50, 200),
+        'batch_size': (16, 128),
+        'learning_rate': (0.0001, 0.01)
     }
 
     # Configure TensorFlow and set seeds
@@ -42,9 +46,10 @@ def main():
     for window in windows:
         print(f"\n=== Processing {window['type']} ===")
         print(f"Training range: {window['train'][0] * 100:.1f}% - {window['train'][1] * 100:.1f}%")
+        print(f"Validation range: {window['validate'][0] * 100:.1f}% - {window['validate'][1] * 100:.1f}%")
         print(f"Testing range: {window['test'][0] * 100:.1f}% - {window['test'][1] * 100:.1f}%")
         for horizon in FORECAST_HORIZONS_REG:
-            result = process_window_regression(window, data, horizon, hyperparams)
+            result = process_window_regression(window, data, horizon, search_space)
             if result is not None:
                 results.append(result)
 
@@ -60,7 +65,6 @@ def configure_tf():
     os.environ['TF_DETERMINISTIC_OPS'] = '1'
     os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
 
-    # Existing GPU check
     gpu_devices = tf.config.list_physical_devices('GPU')
     if gpu_devices:
         print(f"GPU is available. GPU detected: {gpu_devices}")
@@ -95,9 +99,6 @@ def apply_standard_scaling(train_data, test_data):
     return train_scaled, test_scaled, scaler
 
 
-# ==============================================================================
-# Inverse Z-Score Scaling
-# ==============================================================================
 def inverse_standard_scaling(scaled_data, scaler):
     return scaler.inverse_transform(scaled_data)
 
@@ -154,7 +155,7 @@ def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
     learning_rate = hyperparams['learning_rate']
     epochs = hyperparams['epochs']
 
-    # Create regression datasets (these are in scaled space)
+    # Create regression datasets in scaled space
     X_train, y_train = create_dataset_regression(train_data, look_back, forecast_horizon)
     X_test, y_test = create_dataset_regression(test_data, look_back, forecast_horizon)
 
@@ -224,31 +225,102 @@ def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
 
 
 # ==============================================================================
+# Bayesian Optimization for Hyperparameters using Optuna
+# ==============================================================================
+def bayesian_search_hyperparameters(train_scaled, validate_scaled, scaler, forecast_horizon, search_space,
+                                    time_limit=600):
+    def objective(trial):
+        # Sample hyperparameters using the intervals from search_space
+        epochs = trial.suggest_int('epochs', search_space['epochs'][0], search_space['epochs'][1])
+        look_back = trial.suggest_int('look_back', search_space['look_back'][0], search_space['look_back'][1])
+        units = trial.suggest_int('units', search_space['units'][0], search_space['units'][1])
+        batch_size = trial.suggest_int('batch_size', search_space['batch_size'][0], search_space['batch_size'][1])
+        learning_rate = trial.suggest_float('learning_rate', search_space['learning_rate'][0],
+                                            search_space['learning_rate'][1])
+
+        candidate = {
+            'epochs': epochs,
+            'look_back': look_back,
+            'units': units,
+            'batch_size': batch_size,
+            'learning_rate': learning_rate
+        }
+        print(f"Evaluating candidate: {candidate}")
+
+        # Create training and validation datasets using the candidate's look_back
+        X_train, y_train = create_dataset_regression(train_scaled, look_back, forecast_horizon)
+        X_val, y_val = create_dataset_regression(validate_scaled, look_back, forecast_horizon)
+        if len(X_train) == 0 or len(X_val) == 0:
+            # Return a large error if there is insufficient data
+            return 1e6
+
+        X_train = X_train.reshape((X_train.shape[0], look_back, 1))
+        X_val = X_val.reshape((X_val.shape[0], look_back, 1))
+
+        model = build_regression_model(look_back, units, forecast_horizon, learning_rate)
+        model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, verbose=0)
+        y_val_pred = model.predict(X_val, verbose=0)
+        y_val_pred_orig = inverse_standard_scaling(y_val_pred, scaler)
+        y_val_orig = inverse_standard_scaling(y_val, scaler)
+        mse_val = mean_squared_error(y_val_orig.flatten(), y_val_pred_orig.flatten())
+        print(f"Candidate {candidate} achieved validation MSE: {mse_val:.9f}")
+        return mse_val
+
+    study = optuna.create_study(direction="minimize")
+    # Optimize until the time limit (600 seconds) is reached.
+    study.optimize(objective, timeout=time_limit)
+    print(f"Bayesian optimization evaluated {len(study.trials)} candidates")
+    best_hp = study.best_trial.params
+    print(f"Best hyperparameters: {best_hp} with validation MSE: {study.best_trial.value:.9f}")
+    return best_hp
+
+
+# ==============================================================================
 # Processing Each Sliding Window (Regression)
 # ==============================================================================
-def process_window_regression(window_config, data, forecast_horizon, hyperparams):
+def process_window_regression(window_config, data, forecast_horizon, search_space):
     n_samples = len(data)
     train_start = int(window_config['train'][0] * n_samples)
     train_end = int(window_config['train'][1] * n_samples)
+    validate_start = int(window_config['validate'][0] * n_samples)
+    validate_end = int(window_config['validate'][1] * n_samples)
     test_start = int(window_config['test'][0] * n_samples)
     test_end = int(window_config['test'][1] * n_samples)
 
     train_raw = data[train_start:train_end]
+    validate_raw = data[validate_start:validate_end]
     test_raw = data[test_start:test_end]
 
-    if len(train_raw) < hyperparams['look_back'] or len(test_raw) < hyperparams['look_back']:
+    if len(train_raw) < 10 or len(validate_raw) < 10 or len(test_raw) < 10:
         print(f"Skipping {window_config['type']} - insufficient data")
         return None
 
     # Reshape data for LSTM input: (samples, 1)
-    train_data = train_raw.reshape(-1, 1)
-    test_data = test_raw.reshape(-1, 1)
+    train_raw = train_raw.reshape(-1, 1)
+    validate_raw = validate_raw.reshape(-1, 1)
+    test_raw = test_raw.reshape(-1, 1)
 
-    # Apply MinMax scaling to both training and testing data
-    train_data_scaled, test_data_scaled, scaler = apply_standard_scaling(train_data, test_data)
+    # Scale using training data only for Bayesian optimization
+    scaler_train = StandardScaler()
+    train_scaled = scaler_train.fit_transform(train_raw)
+    validate_scaled = scaler_train.transform(validate_raw)
 
-    return train_and_evaluate_regression(train_data_scaled, test_data_scaled, forecast_horizon,
-                                         window_config['type'], hyperparams, scaler)
+    # Perform Bayesian optimization on the validation set using Optuna.
+    best_hp = bayesian_search_hyperparameters(train_scaled, validate_scaled, scaler_train, forecast_horizon,
+                                              search_space, time_limit=600)
+
+    # Combine training and validation for final model training
+    train_val_raw = np.concatenate([train_raw, validate_raw], axis=0)
+    scaler_final = StandardScaler()
+    train_val_scaled = scaler_final.fit_transform(train_val_raw)
+    test_scaled = scaler_final.transform(test_raw)
+
+    # Train and evaluate the final model using the best hyperparameters on train+validate and test on the test set.
+    result = train_and_evaluate_regression(train_val_scaled, test_scaled, forecast_horizon, window_config['type'],
+                                           best_hp, scaler_final)
+    if result is not None:
+        result['best_hyperparameters'] = best_hp
+    return result
 
 
 # ==============================================================================
