@@ -12,59 +12,189 @@ import tensorflow as tf
 from keras.models import Sequential
 from keras.layers import LSTM, Dense, Input
 
+from deap import base, creator, tools
+
+
 # ==============================================================================
 # Main Entry Point
 # ==============================================================================
 def main():
     # Define file paths and hyperparameters
     DATA_PATH = '../../../data/raw/USDEUR=X_max_1d.csv'
-    CLASSIFICATION_CSV_PATH = 'results/attempt.csv'
+    CLASSIFICATION_CSV_PATH = 'results/LSTM_classification_ga.csv'
     FORECAST_HORIZONS_CLF = [1]
 
-    hyperparams = {
-        'look_back': 60,
-        'units': 128,
-        'batch_size': 64,
-        'learning_rate': 1e-3,
-        'epochs': 10
+    search_space = {
+        'epochs': (10, 50),
+        'look_back': (30, 120),
+        'units': (50, 200),
+        'batch_size': (16, 128),
+        'learning_rate': (0.0001, 0.01)
     }
 
     # Configure TensorFlow and set seeds
     configure_tf()
     set_global_config(seed=42)
 
-    # Load data and generate sliding windows
+    # Load and preprocess data
     data = load_data(DATA_PATH)
     data = smooth_data(data)
     windows = generate_sliding_windows()
 
-    # Process each window and collect results
     results = []
-    best_threshold = None
-    start_time = time.time()
+    total_start_time = time.time()
+
+    # Loop over each sliding window and forecast horizon
     for window in windows:
         print(f"\n=== Processing {window['type']} ===")
         print(f"Training range: {window['train'][0] * 100:.1f}% - {window['train'][1] * 100:.1f}%")
+        print(f"Validation range: {window['validate'][0] * 100:.1f}% - {window['validate'][1] * 100:.1f}%")
         print(f"Testing range: {window['test'][0] * 100:.1f}% - {window['test'][1] * 100:.1f}%")
         for horizon in FORECAST_HORIZONS_CLF:
-            # For the validation window, perform ROC curve–based threshold tuning.
-            if window['type'] == 'validation':
-                result = process_window_classification(window, data, horizon, hyperparams, global_threshold=None)
-                if result is not None:
-                    results.append(result)
-                    best_threshold = result['threshold']
-                    print(f"==> Best threshold tuned on validation window: {best_threshold:.2f}")
-            else:
-                if best_threshold is None:
-                    print(f"Skipping {window['type']} because no threshold was tuned from validation.")
-                    continue
-                result = process_window_classification(window, data, horizon, hyperparams, global_threshold=best_threshold)
-                if result is not None:
-                    results.append(result)
+            print(f"\n--- Genetic Algorithm Search for forecast horizon {horizon} on validation split ---")
+            best_hyperparams, best_threshold, best_val_result = genetic_search_classification(
+                window, data, horizon, search_space, time_limit=600
+            )
+            if best_hyperparams is None:
+                print(f"No valid configuration found for window {window['type']}. Skipping test evaluation.")
+                continue
+
+            print(
+                f"==> Best hyperparameters for {window['type']}: {best_hyperparams} with threshold {best_threshold:.2f}")
+            print("Evaluating on test split with best hyperparameters...")
+            test_result = process_window_classification(
+                window, data, horizon, best_hyperparams, global_threshold=best_threshold, eval_split='test'
+            )
+            if test_result is not None:
+                results.append(test_result)
 
     # Save the results to CSV
     save_results(results, CLASSIFICATION_CSV_PATH)
-    print(f"\nTotal execution time: {time.time() - start_time:.2f} seconds")
+    print(f"\nTotal execution time: {time.time() - total_start_time:.2f} seconds")
+
+
+# ==============================================================================
+# Genetic Algorithm for Hyperparameter Tuning (Classification)
+# ==============================================================================
+def genetic_search_classification(window_config, data, forecast_horizon, search_space, time_limit=600):
+    # --- DEAP setup ---
+    # Create fitness and individual classes (if not already created)
+    try:
+        creator.FitnessMax
+    except AttributeError:
+        creator.create("FitnessMax", base.Fitness, weights=(1.0,))
+    try:
+        creator.Individual
+    except AttributeError:
+        creator.create("Individual", list, fitness=creator.FitnessMax)
+
+    toolbox = base.Toolbox()
+    # Attribute generators for each hyperparameter
+    toolbox.register("epochs_attr", random.randint, search_space['epochs'][0], search_space['epochs'][1])
+    toolbox.register("look_back_attr", random.randint, search_space['look_back'][0], search_space['look_back'][1])
+    toolbox.register("units_attr", random.randint, search_space['units'][0], search_space['units'][1])
+    toolbox.register("batch_size_attr", random.randint, search_space['batch_size'][0], search_space['batch_size'][1])
+    toolbox.register("learning_rate_attr", random.uniform, search_space['learning_rate'][0],
+                     search_space['learning_rate'][1])
+
+    # Structure initializers: an individual is a list of the five hyperparameters.
+    toolbox.register("individual", tools.initCycle, creator.Individual,
+                     (toolbox.epochs_attr, toolbox.look_back_attr, toolbox.units_attr,
+                      toolbox.batch_size_attr, toolbox.learning_rate_attr), n=1)
+    toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+
+    # Evaluation function: converts the individual into a hyperparameter dict and evaluates
+    def eval_individual(individual):
+        hyperparams = {
+            'epochs': int(individual[0]),
+            'look_back': int(individual[1]),
+            'units': int(individual[2]),
+            'batch_size': int(individual[3]),
+            'learning_rate': float(individual[4])
+        }
+        result = process_window_classification(window_config, data, forecast_horizon, hyperparams,
+                                               global_threshold=None, eval_split='validate')
+        if result is None:
+            return (0.0,)
+        return (result['accuracy'],)
+
+    toolbox.register("evaluate", eval_individual)
+    toolbox.register("mate", tools.cxTwoPoint)
+
+    # Custom mutation: with probability indpb mutate each gene by re-sampling
+    def mutate_individual(individual, indpb):
+        if random.random() < indpb:
+            individual[0] = random.randint(search_space['epochs'][0], search_space['epochs'][1])
+        if random.random() < indpb:
+            individual[1] = random.randint(search_space['look_back'][0], search_space['look_back'][1])
+        if random.random() < indpb:
+            individual[2] = random.randint(search_space['units'][0], search_space['units'][1])
+        if random.random() < indpb:
+            individual[3] = random.randint(search_space['batch_size'][0], search_space['batch_size'][1])
+        if random.random() < indpb:
+            individual[4] = random.uniform(search_space['learning_rate'][0], search_space['learning_rate'][1])
+        return (individual,)
+
+    toolbox.register("mutate", mutate_individual, indpb=0.2)
+    toolbox.register("select", tools.selTournament, tournsize=3)
+
+    # --- Genetic Algorithm Loop ---
+    pop_size = 20
+    pop = toolbox.population(n=pop_size)
+    start_time = time.time()
+    best_individual = None
+    best_fitness = 0.0
+    gen = 0
+
+    while time.time() - start_time < time_limit:
+        # Evaluate individuals with an invalid fitness
+        invalid_ind = [ind for ind in pop if not ind.fitness.valid]
+        for ind in invalid_ind:
+            ind.fitness.values = toolbox.evaluate(ind)
+            if ind.fitness.values[0] > best_fitness:
+                best_fitness = ind.fitness.values[0]
+                best_individual = ind
+        # Select the next generation individuals
+        offspring = toolbox.select(pop, len(pop))
+        offspring = list(map(toolbox.clone, offspring))
+        # Apply crossover on the offspring
+        for child1, child2 in zip(offspring[::2], offspring[1::2]):
+            if random.random() < 0.5:
+                toolbox.mate(child1, child2)
+                del child1.fitness.values
+                del child2.fitness.values
+        # Apply mutation on the offspring
+        for mutant in offspring:
+            if random.random() < 0.2:
+                toolbox.mutate(mutant)
+                del mutant.fitness.values
+        # Evaluate the individuals with an invalid fitness after crossover and mutation
+        invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
+        for ind in invalid_ind:
+            ind.fitness.values = toolbox.evaluate(ind)
+            if ind.fitness.values[0] > best_fitness:
+                best_fitness = ind.fitness.values[0]
+                best_individual = ind
+        pop[:] = offspring
+        gen += 1
+        print(f"Generation {gen} - best fitness so far: {best_fitness:.5f}")
+
+    if best_individual is None:
+        return None, None, None
+
+    # Convert best individual to hyperparameters
+    best_hyperparams = {
+        'epochs': int(best_individual[0]),
+        'look_back': int(best_individual[1]),
+        'units': int(best_individual[2]),
+        'batch_size': int(best_individual[3]),
+        'learning_rate': float(best_individual[4])
+    }
+    # Re-evaluate on the validation split to get the tuned threshold
+    best_result = process_window_classification(window_config, data, forecast_horizon,
+                                                best_hyperparams, global_threshold=None, eval_split='validate')
+    best_threshold = best_result['threshold'] if best_result is not None else None
+    return best_hyperparams, best_threshold, best_result
 
 
 # ==============================================================================
@@ -73,8 +203,6 @@ def main():
 def configure_tf():
     os.environ['TF_DETERMINISTIC_OPS'] = '1'
     os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
-
-    # Existing GPU check
     gpu_devices = tf.config.list_physical_devices('GPU')
     if gpu_devices:
         print(f"GPU is available. GPU detected: {gpu_devices}")
@@ -104,7 +232,7 @@ def smooth_data(data):
 
 
 # ==============================================================================
-# MinMax Scaling for train and test data
+# MinMax Scaling for Train and Test Data
 # ==============================================================================
 def apply_minmax_scaling(train_data, test_data):
     scaler = MinMaxScaler()
@@ -185,7 +313,8 @@ def evaluate_metrics(y_true, y_pred, forecast_horizon):
 # ==============================================================================
 # Training and Evaluation (Classification)
 # ==============================================================================
-def optimize_and_train_classification(train_data, test_data, forecast_horizon, window_type, hyperparams, grid_threshold=None):
+def optimize_and_train_classification(train_data, eval_data, forecast_horizon, window_type, hyperparams,
+                                      grid_threshold=None):
     look_back = hyperparams['look_back']
     units = hyperparams['units']
     batch_size = hyperparams['batch_size']
@@ -193,35 +322,32 @@ def optimize_and_train_classification(train_data, test_data, forecast_horizon, w
     epochs = hyperparams['epochs']
 
     X_train, y_train = create_dataset_classification(train_data, look_back, forecast_horizon)
-    X_test, y_test = create_dataset_classification(test_data, look_back, forecast_horizon)
+    X_eval, y_eval = create_dataset_classification(eval_data, look_back, forecast_horizon)
 
-    if len(X_train) == 0 or len(X_test) == 0:
+    if len(X_train) == 0 or len(X_eval) == 0:
         print(f"[Classification - {window_type}] Insufficient data for the given parameters.")
         return None
 
     # Reshape data for LSTM input: (samples, look_back, features)
     X_train = X_train.reshape((X_train.shape[0], look_back, 1))
-    X_test = X_test.reshape((X_test.shape[0], look_back, 1))
+    X_eval = X_eval.reshape((X_eval.shape[0], look_back, 1))
 
     model = build_classification_model(look_back, units, forecast_horizon, learning_rate)
     history = model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, verbose=0)
     epochs_run = len(history.history['loss'])
 
     # Get prediction probabilities
-    test_probs = model.predict(X_test, verbose=0)
+    eval_probs = model.predict(X_eval, verbose=0)
 
-    # -----------------------------------------------
-    # ROC Curve–Based Threshold Tuning on Validation
-    # -----------------------------------------------
+    # ROC Curve–Based Threshold Tuning on Evaluation Data
     if grid_threshold is None:
-        # Compute ROC curve using the flattened arrays (assuming forecast_horizon == 1)
-        fpr, tpr, roc_thresholds = roc_curve(y_test.flatten(), test_probs.flatten())
+        fpr, tpr, roc_thresholds = roc_curve(y_eval.flatten(), eval_probs.flatten())
         best_acc = -1
         best_threshold = None
         best_preds = None
         for t in roc_thresholds:
-            preds_temp = (test_probs > t).astype(int)
-            acc_temp, _, _, _, _ = evaluate_metrics(y_test, preds_temp, forecast_horizon)
+            preds_temp = (eval_probs > t).astype(int)
+            acc_temp, _, _, _, _ = evaluate_metrics(y_eval, preds_temp, forecast_horizon)
             if acc_temp > best_acc:
                 best_acc = acc_temp
                 best_threshold = t
@@ -230,9 +356,9 @@ def optimize_and_train_classification(train_data, test_data, forecast_horizon, w
         preds = best_preds
     else:
         threshold_used = grid_threshold
-        preds = (test_probs > grid_threshold).astype(int)
+        preds = (eval_probs > grid_threshold).astype(int)
 
-    avg_acc, avg_prec, avg_rec, avg_f1, avg_spec = evaluate_metrics(y_test, preds, forecast_horizon)
+    avg_acc, avg_prec, avg_rec, avg_f1, avg_spec = evaluate_metrics(y_eval, preds, forecast_horizon)
 
     result = {
         'type': window_type,
@@ -250,7 +376,7 @@ def optimize_and_train_classification(train_data, test_data, forecast_horizon, w
         'specificity': avg_spec
     }
     print(
-        f"[Classification - {window_type}] Final metrics (horizon={forecast_horizon}): "
+        f"[Classification - {window_type}] Metrics (horizon={forecast_horizon}): "
         f"Accuracy={avg_acc:.5f}, Precision={avg_prec:.5f}, Recall={avg_rec:.5f}, "
         f"F1={avg_f1:.5f}, Specificity={avg_spec:.5f}, EpochsRun={epochs_run}, "
         f"Threshold={threshold_used:.2f}"
@@ -261,30 +387,33 @@ def optimize_and_train_classification(train_data, test_data, forecast_horizon, w
 # ==============================================================================
 # Processing Each Sliding Window (Classification)
 # ==============================================================================
-def process_window_classification(window_config, data, forecast_horizon, hyperparams, global_threshold=None):
+def process_window_classification(window_config, data, forecast_horizon, hyperparams, global_threshold=None,
+                                  eval_split='test'):
     n_samples = len(data)
+    # Determine training indices
     train_start = int(window_config['train'][0] * n_samples)
     train_end = int(window_config['train'][1] * n_samples)
-    test_start = int(window_config['test'][0] * n_samples)
-    test_end = int(window_config['test'][1] * n_samples)
+    # Determine evaluation indices based on eval_split ('validate' or 'test')
+    eval_start = int(window_config[eval_split][0] * n_samples)
+    eval_end = int(window_config[eval_split][1] * n_samples)
 
     train_raw = data[train_start:train_end]
-    test_raw = data[test_start:test_end]
+    eval_raw = data[eval_start:eval_end]
 
-    if len(train_raw) < hyperparams['look_back'] or len(test_raw) < hyperparams['look_back']:
-        print(f"Skipping {window_config['type']} - insufficient data")
+    if len(train_raw) < hyperparams['look_back'] or len(eval_raw) < hyperparams['look_back']:
+        print(f"Skipping {window_config['type']} - insufficient data in {eval_split} split")
         return None
 
     # Reshape data for LSTM input: (samples, 1)
     train_data = train_raw.reshape(-1, 1)
-    test_data = test_raw.reshape(-1, 1)
+    eval_data = eval_raw.reshape(-1, 1)
 
-    # Apply MinMax scaling to both training and testing data
-    train_data_scaled, test_data_scaled, _ = apply_minmax_scaling(train_data, test_data)
+    # Apply MinMax scaling to both training and evaluation data
+    train_data_scaled, eval_data_scaled, _ = apply_minmax_scaling(train_data, eval_data)
 
     return optimize_and_train_classification(
-        train_data_scaled, test_data_scaled, forecast_horizon,
-        window_config['type'], hyperparams, grid_threshold=global_threshold
+        train_data_scaled, eval_data_scaled, forecast_horizon,
+        window_config['type'] + "_" + eval_split, hyperparams, grid_threshold=global_threshold
     )
 
 
