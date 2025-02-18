@@ -4,7 +4,7 @@
 
 ### 📝 About the "Draft" Folder
 
-The contents of this **"draft" folder** are primarily for me to **gain experience from scratch through practice**. 
+The contents of this **"draft" folder** are primarily for me to **gain experience from scratch through practice**, I didn't write they carefully. 
 
 🚧 **Most of them are rough and flawed.** 🚧
 
