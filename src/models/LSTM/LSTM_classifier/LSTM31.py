@@ -46,9 +46,9 @@ def main():
     start_time = time.time()
     for window in windows:
         print(f"\n=== Processing {window['type']} ===")
-        print(f"Training range: {window['train'][0]*100:.1f}% - {window['train'][1]*100:.1f}%")
-        print(f"Validation range: {window['validate'][0]*100:.1f}% - {window['validate'][1]*100:.1f}%")
-        print(f"Testing range: {window['test'][0]*100:.1f}% - {window['test'][1]*100:.1f}%")
+        print(f"Training range: {window['train'][0] * 100:.1f}% - {window['train'][1] * 100:.1f}%")
+        print(f"Validation range: {window['validate'][0] * 100:.1f}% - {window['validate'][1] * 100:.1f}%")
+        print(f"Testing range: {window['test'][0] * 100:.1f}% - {window['test'][1] * 100:.1f}%")
         for horizon in FORECAST_HORIZONS_CLF:
             # For the validation window, perform adaptive threshold tuning on the validation split.
             if window['type'] == 'validation':
@@ -69,7 +69,7 @@ def main():
 
     # Save the results to CSV
     save_results(results, CLASSIFICATION_CSV_PATH)
-    print(f"\nTotal execution time: {time.time()-start_time:.2f} seconds")
+    print(f"\nTotal execution time: {time.time() - start_time:.2f} seconds")
 
 
 # ==============================================================================
@@ -122,10 +122,10 @@ def apply_minmax_scaling(train_data, test_data):
 def generate_sliding_windows():
     return [
         {'type': 'validation', 'train': (0.0, 0.12), 'validate': (0.12, 0.16), 'test': (0.16, 0.20)},
-        {'type': 'window_1',   'train': (0.20, 0.32), 'validate': (0.32, 0.36), 'test': (0.36, 0.40)},
-        {'type': 'window_2',   'train': (0.40, 0.52), 'validate': (0.52, 0.56), 'test': (0.56, 0.60)},
-        {'type': 'window_3',   'train': (0.60, 0.72), 'validate': (0.72, 0.76), 'test': (0.76, 0.80)},
-        {'type': 'window_4',   'train': (0.80, 0.92), 'validate': (0.92, 0.96), 'test': (0.96, 1.00)}
+        {'type': 'window_1', 'train': (0.20, 0.32), 'validate': (0.32, 0.36), 'test': (0.36, 0.40)},
+        {'type': 'window_2', 'train': (0.40, 0.52), 'validate': (0.52, 0.56), 'test': (0.56, 0.60)},
+        {'type': 'window_3', 'train': (0.60, 0.72), 'validate': (0.72, 0.76), 'test': (0.76, 0.80)},
+        {'type': 'window_4', 'train': (0.80, 0.92), 'validate': (0.92, 0.96), 'test': (0.96, 1.00)}
     ]
 
 
@@ -185,9 +185,31 @@ def evaluate_metrics(y_true, y_pred, forecast_horizon):
 
 
 # ==============================================================================
+# Adaptive Threshold Tuning Function
+# ==============================================================================
+def tune_threshold_adaptive(eval_probs, y_eval, forecast_horizon, grid_threshold=None):
+    if grid_threshold is None:
+        # Define the objective function (negative accuracy)
+        def objective(t):
+            preds_temp = (eval_probs > t).astype(int)
+            acc_temp, _, _, _, _ = evaluate_metrics(y_eval, preds_temp, forecast_horizon)
+            return -acc_temp
+
+        # Use bounded minimization to search for the optimal threshold in [0, 1]
+        res = minimize_scalar(objective, bounds=(0, 1), method='bounded')
+        threshold_used = res.x
+        preds = (eval_probs > threshold_used).astype(int)
+        return threshold_used, preds
+    else:
+        preds = (eval_probs > grid_threshold).astype(int)
+        return grid_threshold, preds
+
+
+# ==============================================================================
 # Training and Evaluation (Classification)
 # ==============================================================================
-def optimize_and_train_classification(train_data, eval_data, forecast_horizon, window_type, hyperparams, grid_threshold=None):
+def optimize_and_train_classification(train_data, eval_data, forecast_horizon, window_type, hyperparams,
+                                      grid_threshold=None):
     look_back = hyperparams['look_back']
     units = hyperparams['units']
     batch_size = hyperparams['batch_size']
@@ -212,24 +234,8 @@ def optimize_and_train_classification(train_data, eval_data, forecast_horizon, w
     # Get prediction probabilities
     eval_probs = model.predict(X_eval, verbose=0)
 
-    # -------------------------------------------------------------
-    # Adaptive Threshold Tuning on the Evaluation Split
-    # -------------------------------------------------------------
-    if grid_threshold is None:
-        # Define an objective function that returns negative accuracy
-        # (because we want to maximize accuracy, so we minimize -accuracy)
-        def objective(t):
-            preds_temp = (eval_probs > t).astype(int)
-            acc_temp, _, _, _, _ = evaluate_metrics(y_eval, preds_temp, forecast_horizon)
-            return -acc_temp
-
-        # Use bounded minimization to search for the optimal threshold in [0,1]
-        res = minimize_scalar(objective, bounds=(0, 1), method='bounded')
-        threshold_used = res.x
-        preds = (eval_probs > threshold_used).astype(int)
-    else:
-        threshold_used = grid_threshold
-        preds = (eval_probs > grid_threshold).astype(int)
+    # Use the adaptive threshold tuning function
+    threshold_used, preds = tune_threshold_adaptive(eval_probs, y_eval, forecast_horizon, grid_threshold)
 
     avg_acc, avg_prec, avg_rec, avg_f1, avg_spec = evaluate_metrics(y_eval, preds, forecast_horizon)
 
@@ -260,11 +266,11 @@ def optimize_and_train_classification(train_data, eval_data, forecast_horizon, w
 # ==============================================================================
 # Processing Each Sliding Window (Classification)
 # ==============================================================================
-def process_window_classification(window_config, data, forecast_horizon, hyperparams, global_threshold=None, eval_split='test'):
+def process_window_classification(window_config, data, forecast_horizon, hyperparams, global_threshold=None,
+                                  eval_split='test'):
     n_samples = len(data)
     train_start = int(window_config['train'][0] * n_samples)
     train_end = int(window_config['train'][1] * n_samples)
-    # Select evaluation split based on the provided key (either 'validate' or 'test')
     eval_start = int(window_config[eval_split][0] * n_samples)
     eval_end = int(window_config[eval_split][1] * n_samples)
 

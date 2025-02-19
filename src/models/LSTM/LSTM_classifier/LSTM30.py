@@ -186,6 +186,33 @@ def evaluate_metrics(y_true, y_pred, forecast_horizon):
 
 
 # ==============================================================================
+# Cost-Sensitive Threshold Tuning Function
+# ==============================================================================
+def tune_threshold_cost_sensitive(eval_probs, y_eval, forecast_horizon, cost_FP=1.0, cost_FN=2.0, grid_threshold=None):
+    if grid_threshold is None:
+        candidate_thresholds = list(np.linspace(0.0, 1.0, 11))
+        best_cost = float('inf')
+        best_threshold = None
+        best_preds = None
+        for t in candidate_thresholds:
+            preds_temp = (eval_probs > t).astype(int)
+            cm = confusion_matrix(y_eval.flatten(), preds_temp.flatten())
+            if cm.shape == (2, 2):
+                tn, fp, fn, tp = cm.ravel()
+                cost = cost_FP * fp + cost_FN * fn
+            else:
+                cost = 0 if np.all(y_eval.flatten() == preds_temp.flatten()) else float('inf')
+            if cost < best_cost:
+                best_cost = cost
+                best_threshold = t
+                best_preds = preds_temp
+        return best_threshold, best_preds, best_cost
+    else:
+        preds = (eval_probs > grid_threshold).astype(int)
+        return grid_threshold, preds, None
+
+
+# ==============================================================================
 # Training and Evaluation (Classification)
 # ==============================================================================
 def optimize_and_train_classification(train_data, eval_data, forecast_horizon, window_type, hyperparams, grid_threshold=None):
@@ -213,35 +240,10 @@ def optimize_and_train_classification(train_data, eval_data, forecast_horizon, w
     # Get prediction probabilities
     eval_probs = model.predict(X_eval, verbose=0)
 
-    # -----------------------------------------------------------
-    # Cost-Sensitive Threshold Tuning on Evaluation Split
-    # -----------------------------------------------------------
-    # Define misclassification costs
-    cost_FP = 1.0   # cost for false positive
-    cost_FN = 2.0   # cost for false negative
-
-    if grid_threshold is None:
-        candidate_thresholds = list(np.linspace(0.0, 1.0, 11))
-        best_cost = float('inf')
-        best_threshold = None
-        best_preds = None
-        for t in candidate_thresholds:
-            preds_temp = (eval_probs > t).astype(int)
-            cm = confusion_matrix(y_eval.flatten(), preds_temp.flatten())
-            if cm.shape == (2, 2):
-                tn, fp, fn, tp = cm.ravel()
-                cost = cost_FP * fp + cost_FN * fn
-            else:
-                cost = 0 if np.all(y_eval.flatten() == preds_temp.flatten()) else float('inf')
-            if cost < best_cost:
-                best_cost = cost
-                best_threshold = t
-                best_preds = preds_temp
-        threshold_used = best_threshold
-        preds = best_preds
-    else:
-        threshold_used = grid_threshold
-        preds = (eval_probs > grid_threshold).astype(int)
+    # Use the cost-sensitive threshold tuning function
+    threshold_used, preds, best_cost = tune_threshold_cost_sensitive(
+        eval_probs, y_eval, forecast_horizon, cost_FP=1.0, cost_FN=2.0, grid_threshold=grid_threshold
+    )
 
     avg_acc, avg_prec, avg_rec, avg_f1, avg_spec = evaluate_metrics(y_eval, preds, forecast_horizon)
 

@@ -184,9 +184,32 @@ def evaluate_metrics(y_true, y_pred, forecast_horizon):
 
 
 # ==============================================================================
+# ROC Curve–Based Threshold Tuning Function
+# ==============================================================================
+def tune_threshold_roc(eval_probs, y_eval, forecast_horizon, grid_threshold=None):
+    if grid_threshold is None:
+        fpr, tpr, roc_thresholds = roc_curve(y_eval.flatten(), eval_probs.flatten())
+        best_acc = -1
+        best_threshold = None
+        best_preds = None
+        for t in roc_thresholds:
+            preds_temp = (eval_probs > t).astype(int)
+            acc_temp, _, _, _, _ = evaluate_metrics(y_eval, preds_temp, forecast_horizon)
+            if acc_temp > best_acc:
+                best_acc = acc_temp
+                best_threshold = t
+                best_preds = preds_temp
+        return best_threshold, best_preds
+    else:
+        preds = (eval_probs > grid_threshold).astype(int)
+        return grid_threshold, preds
+
+
+# ==============================================================================
 # Training and Evaluation (Classification)
 # ==============================================================================
-def optimize_and_train_classification(train_data, eval_data, forecast_horizon, window_type, hyperparams, grid_threshold=None):
+def optimize_and_train_classification(train_data, eval_data, forecast_horizon, window_type, hyperparams,
+                                      grid_threshold=None):
     look_back = hyperparams['look_back']
     units = hyperparams['units']
     batch_size = hyperparams['batch_size']
@@ -211,26 +234,8 @@ def optimize_and_train_classification(train_data, eval_data, forecast_horizon, w
     # Get prediction probabilities
     eval_probs = model.predict(X_eval, verbose=0)
 
-    # ---------------------------------------------------
-    # ROC Curve–Based Threshold Tuning on Evaluation Split
-    # ---------------------------------------------------
-    if grid_threshold is None:
-        fpr, tpr, roc_thresholds = roc_curve(y_eval.flatten(), eval_probs.flatten())
-        best_acc = -1
-        best_threshold = None
-        best_preds = None
-        for t in roc_thresholds:
-            preds_temp = (eval_probs > t).astype(int)
-            acc_temp, _, _, _, _ = evaluate_metrics(y_eval, preds_temp, forecast_horizon)
-            if acc_temp > best_acc:
-                best_acc = acc_temp
-                best_threshold = t
-                best_preds = preds_temp
-        threshold_used = best_threshold
-        preds = best_preds
-    else:
-        threshold_used = grid_threshold
-        preds = (eval_probs > grid_threshold).astype(int)
+    # Use the ROC-based threshold tuning function
+    threshold_used, preds = tune_threshold_roc(eval_probs, y_eval, forecast_horizon, grid_threshold)
 
     avg_acc, avg_prec, avg_rec, avg_f1, avg_spec = evaluate_metrics(y_eval, preds, forecast_horizon)
 
@@ -261,7 +266,8 @@ def optimize_and_train_classification(train_data, eval_data, forecast_horizon, w
 # ==============================================================================
 # Processing Each Sliding Window (Classification)
 # ==============================================================================
-def process_window_classification(window_config, data, forecast_horizon, hyperparams, global_threshold=None, eval_split='test'):
+def process_window_classification(window_config, data, forecast_horizon, hyperparams, global_threshold=None,
+                                  eval_split='test'):
     n_samples = len(data)
     train_start = int(window_config['train'][0] * n_samples)
     train_end = int(window_config['train'][1] * n_samples)
