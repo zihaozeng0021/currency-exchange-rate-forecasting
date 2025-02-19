@@ -24,7 +24,6 @@ def main():
     CLASSIFICATION_CSV_PATH = 'results/LSTM_classification_bo.csv'
     FORECAST_HORIZONS_CLF = [1]
 
-
     search_space = {
         'epochs': (10, 50),
         'look_back': (30, 120),
@@ -50,7 +49,7 @@ def main():
         print(f"Validation range: {window['validate'][0] * 100:.1f}% - {window['validate'][1] * 100:.1f}%")
         print(f"Testing range: {window['test'][0] * 100:.1f}% - {window['test'][1] * 100:.1f}%")
         for horizon in FORECAST_HORIZONS_CLF:
-            result = process_window_classification(window, data, horizon, search_space)
+            result = process_window_classification(window, data, horizon, search_space, eval_split='test')
             if result is not None:
                 results.append(result)
 
@@ -202,9 +201,7 @@ def bayesian_search_hyperparameters_classification(train_scaled, validate_scaled
 
         # Predict on validation set
         val_probs = model.predict(X_val, verbose=0)
-        val_preds = (val_probs > 0.5).astype(int)  # Default threshold for optimization
-
-        # Calculate accuracy
+        val_preds = (val_probs > 0.5).astype(int)
         accuracy = accuracy_score(y_val.flatten(), val_preds.flatten())
         return accuracy
 
@@ -217,9 +214,9 @@ def bayesian_search_hyperparameters_classification(train_scaled, validate_scaled
 # ==============================================================================
 # Processing Each Sliding Window (Classification)
 # ==============================================================================
-def process_window_classification(window_config, data, forecast_horizon, search_space):
+def process_window_classification(window_config, data, forecast_horizon, search_space, eval_split='test'):
     n_samples = len(data)
-    # Extract indices for train, validate, test
+    # Extract indices for train, validate, and test splits
     train_start = int(window_config['train'][0] * n_samples)
     train_end = int(window_config['train'][1] * n_samples)
     validate_start = int(window_config['validate'][0] * n_samples)
@@ -232,43 +229,49 @@ def process_window_classification(window_config, data, forecast_horizon, search_
     validate_raw = data[validate_start:validate_end]
     test_raw = data[test_start:test_end]
 
-    if len(train_raw) < 10 or len(validate_raw) < 10 or len(test_raw) < 10:
+    # Choose evaluation data based on eval_split parameter
+    if eval_split == 'validate':
+        eval_raw = validate_raw
+    elif eval_split == 'test':
+        eval_raw = test_raw
+    else:
+        raise ValueError("eval_split must be either 'validate' or 'test'")
+
+    if len(train_raw) < 10 or len(validate_raw) < 10 or len(eval_raw) < 10:
         print(f"Skipping {window_config['type']} - insufficient data")
         return None
 
-    # Reshape for scaling
+    # Reshape data for scaling
     train_raw = train_raw.reshape(-1, 1)
     validate_raw = validate_raw.reshape(-1, 1)
-    test_raw = test_raw.reshape(-1, 1)
+    eval_raw = eval_raw.reshape(-1, 1)
 
-    # Scale using training data
-    scaler = MinMaxScaler()
-    train_scaled = scaler.fit_transform(train_raw)
-    validate_scaled = scaler.transform(validate_raw)
-    test_scaled = scaler.transform(test_raw)
+    # Scale training and validation data using the helper function
+    train_scaled, validate_scaled, scaler = apply_minmax_scaling(train_raw, validate_raw)
+    # Scale evaluation data using the same scaler
+    eval_scaled = scaler.transform(eval_raw)
 
-    # Perform Bayesian optimization for hyperparameters
+    # Perform Bayesian optimization for hyperparameters using train and validation sets
     best_hp = bayesian_search_hyperparameters_classification(
         train_scaled, validate_scaled, forecast_horizon, search_space
     )
 
-    # Combine train and validate data
+    # Combine training and validation data for final model training
     train_val_raw = np.concatenate([train_raw, validate_raw], axis=0)
-    # Scale using the original scaler (fit on train)
     train_val_scaled = scaler.transform(train_val_raw)
 
-    # Create datasets with best look_back
+    # Create datasets using the best look_back parameter
     look_back = best_hp['look_back']
     X_train_val, y_train_val = create_dataset_classification(train_val_scaled, look_back, forecast_horizon)
-    X_test, y_test = create_dataset_classification(test_scaled, look_back, forecast_horizon)
+    X_eval, y_eval = create_dataset_classification(eval_scaled, look_back, forecast_horizon)
 
-    if len(X_train_val) == 0 or len(X_test) == 0:
+    if len(X_train_val) == 0 or len(X_eval) == 0:
         print(f"[Classification - {window_config['type']}] Insufficient data after combining.")
         return None
 
-    # Reshape for LSTM
+    # Reshape data for LSTM input
     X_train_val = X_train_val.reshape((X_train_val.shape[0], look_back, 1))
-    X_test = X_test.reshape((X_test.shape[0], look_back, 1))
+    X_eval = X_eval.reshape((X_eval.shape[0], look_back, 1))
 
     # Build and train final model on combined data
     model = build_classification_model(
@@ -285,23 +288,25 @@ def process_window_classification(window_config, data, forecast_horizon, search_
     )
     epochs_run = len(history.history['loss'])
 
-    # Predict probabilities on validation set to find optimal threshold
+    # Use the validation set for threshold selection (always the same for hyperparameter tuning)
     X_val, y_val = create_dataset_classification(validate_scaled, look_back, forecast_horizon)
+    if len(X_val) == 0:
+        print(f"[Classification - {window_config['type']}] Insufficient validation data for threshold tuning.")
+        return None
     X_val = X_val.reshape((X_val.shape[0], look_back, 1))
     val_probs = model.predict(X_val, verbose=0)
 
-    # Find best threshold using validation data
+    # Determine best threshold using Youden's J statistic
     fpr, tpr, thresholds = roc_curve(y_val.flatten(), val_probs.flatten())
-    best_threshold = thresholds[np.argmax(tpr - fpr)]  # Youden's J statistic
+    best_threshold = thresholds[np.argmax(tpr - fpr)]
 
-    # Predict on test data and apply threshold
-    test_probs = model.predict(X_test, verbose=0)
-    test_preds = (test_probs > best_threshold).astype(int)
+    # Predict probabilities on evaluation data and apply threshold
+    eval_probs = model.predict(X_eval, verbose=0)
+    eval_preds = (eval_probs > best_threshold).astype(int)
 
-    # Evaluate metrics
-    avg_acc, avg_prec, avg_rec, avg_f1, avg_spec = evaluate_metrics(y_test, test_preds, forecast_horizon)
+    # Evaluate metrics on the chosen evaluation split
+    avg_acc, avg_prec, avg_rec, avg_f1, avg_spec = evaluate_metrics(y_eval, eval_preds, forecast_horizon)
 
-    # Compile results
     result = {
         'type': window_config['type'],
         'forecast_horizon': forecast_horizon,
@@ -338,8 +343,8 @@ def save_results(results, csv_path):
         results_df = pd.concat([results_df, pd.DataFrame([avg_row])], ignore_index=True)
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
         results_df.to_csv(csv_path, index=False)
-        print("\nFinal classification results:")
         cols_to_show = ['type', 'accuracy', 'precision', 'recall', 'f1_score', 'specificity', 'threshold']
+        print("\nFinal classification results:")
         print(results_df[cols_to_show].to_string(index=False))
     else:
         print("No valid classification results generated.")
