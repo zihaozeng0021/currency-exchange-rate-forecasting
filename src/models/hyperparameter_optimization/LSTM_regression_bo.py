@@ -78,6 +78,7 @@ def set_global_config(seed=42):
     np.random.seed(seed)
     tf.random.set_seed(seed)
     tf.keras.utils.set_random_seed(seed)
+    optuna.samplers.TPESampler(seed=seed)
 
 
 # ==============================================================================

@@ -6,7 +6,8 @@ import warnings
 import time
 import itertools
 
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, roc_curve
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, \
+    precision_recall_curve
 from sklearn.preprocessing import MinMaxScaler
 
 import tensorflow as tf
@@ -211,25 +212,11 @@ def optimize_and_train_classification(train_data, eval_data, forecast_horizon, w
     # Get prediction probabilities
     eval_probs = model.predict(X_eval, verbose=0)
 
-    # -----------------------------------------------
-    # ROC Curve–Based Threshold Tuning on Evaluation Data
-    # -----------------------------------------------
+    # Use Precision-Recall Curve–Based Threshold Tuning on Evaluation Data
     if grid_threshold is None:
-        fpr, tpr, roc_thresholds = roc_curve(y_eval.flatten(), eval_probs.flatten())
-        best_acc = -1
-        best_threshold = None
-        best_preds = None
-        for t in roc_thresholds:
-            preds_temp = (eval_probs > t).astype(int)
-            acc_temp, _, _, _, _ = evaluate_metrics(y_eval, preds_temp, forecast_horizon)
-            if acc_temp > best_acc:
-                best_acc = acc_temp
-                best_threshold = t
-                best_preds = preds_temp
-        threshold_used = best_threshold
-        preds = best_preds
+        best_threshold, preds = tune_threshold_pr(y_eval, eval_probs, forecast_horizon)
     else:
-        threshold_used = grid_threshold
+        best_threshold = grid_threshold
         preds = (eval_probs > grid_threshold).astype(int)
 
     avg_acc, avg_prec, avg_rec, avg_f1, avg_spec = evaluate_metrics(y_eval, preds, forecast_horizon)
@@ -242,7 +229,7 @@ def optimize_and_train_classification(train_data, eval_data, forecast_horizon, w
         'batch_size': batch_size,
         'learning_rate': learning_rate,
         'epochs_run': epochs_run,
-        'threshold': threshold_used,
+        'threshold': best_threshold,
         'accuracy': avg_acc,
         'precision': avg_prec,
         'recall': avg_rec,
@@ -253,7 +240,7 @@ def optimize_and_train_classification(train_data, eval_data, forecast_horizon, w
         f"[Classification - {window_type}] Metrics (horizon={forecast_horizon}): "
         f"Accuracy={avg_acc:.5f}, Precision={avg_prec:.5f}, Recall={avg_rec:.5f}, "
         f"F1={avg_f1:.5f}, Specificity={avg_spec:.5f}, EpochsRun={epochs_run}, "
-        f"Threshold={threshold_used:.2f}"
+        f"Threshold={best_threshold:.2f}"
     )
     return result
 
@@ -261,10 +248,13 @@ def optimize_and_train_classification(train_data, eval_data, forecast_horizon, w
 # ==============================================================================
 # Processing Each Sliding Window (Classification)
 # ==============================================================================
-def process_window_classification(window_config, data, forecast_horizon, hyperparams, global_threshold=None, eval_split='test'):
+def process_window_classification(window_config, data, forecast_horizon, hyperparams, global_threshold=None,
+                                  eval_split='test'):
     n_samples = len(data)
+    # Determine training indices
     train_start = int(window_config['train'][0] * n_samples)
     train_end = int(window_config['train'][1] * n_samples)
+    # Determine evaluation indices based on eval_split ('validate' or 'test')
     eval_start = int(window_config[eval_split][0] * n_samples)
     eval_end = int(window_config[eval_split][1] * n_samples)
 
@@ -312,7 +302,8 @@ def grid_search_classification(window_config, data, forecast_horizon, search_spa
             break
 
         # Use the validation split for grid search (global_threshold=None to allow threshold tuning)
-        result = process_window_classification(window_config, data, forecast_horizon, params, global_threshold=None, eval_split='validate')
+        result = process_window_classification(window_config, data, forecast_horizon, params, global_threshold=None,
+                                               eval_split='validate')
         if result is None:
             continue
 
@@ -324,6 +315,22 @@ def grid_search_classification(window_config, data, forecast_horizon, search_spa
             best_threshold = result['threshold']
 
     return best_hyperparams, best_threshold, best_result
+
+
+def tune_threshold_pr(y_true, probs, forecast_horizon):
+    precision_vals, recall_vals, thresholds = precision_recall_curve(y_true.flatten(), probs.flatten())
+    best_f1 = -1
+    best_threshold = 0.5  # default value
+    for i, t in enumerate(thresholds):
+        if precision_vals[i] + recall_vals[i] > 0:
+            f1 = 2 * precision_vals[i] * recall_vals[i] / (precision_vals[i] + recall_vals[i])
+        else:
+            f1 = 0
+        if f1 > best_f1:
+            best_f1 = f1
+            best_threshold = t
+    preds = (probs > best_threshold).astype(int)
+    return best_threshold, preds
 
 
 # ==============================================================================
@@ -338,10 +345,9 @@ def save_results(results, csv_path):
         results_df = pd.concat([results_df, pd.DataFrame([avg_row])], ignore_index=True)
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
         results_df.to_csv(csv_path, index=False)
+        cols_to_show = ['type', 'accuracy', 'precision', 'recall', 'f1_score', 'specificity', 'threshold']
         print("\nFinal classification results:")
-        print(
-            results_df[['type', 'accuracy', 'precision', 'recall', 'f1_score', 'specificity']].to_string(index=False)
-        )
+        print(results_df[cols_to_show].to_string(index=False))
     else:
         print("No valid classification results generated.")
 

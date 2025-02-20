@@ -64,6 +64,9 @@ if __name__ == "__main__":
         'LSTM_classification_ga.py',
         'LSTM_classification_gs.py',
         'LSTM_classification_rs.py',
-        'LSTM_classification_rl.py'
+        'LSTM_classification_rl.py',
+        'LSTM_classification_hb.py',
+        'LSTM_classification_sa.py',
+        'LSTM_regression_bo.py'
     ]
     run_python_files(paths)

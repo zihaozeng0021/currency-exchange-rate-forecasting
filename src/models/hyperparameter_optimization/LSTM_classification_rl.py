@@ -5,7 +5,8 @@ import random
 import warnings
 import time
 
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, roc_curve
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, \
+    precision_recall_curve
 from sklearn.preprocessing import MinMaxScaler
 
 import tensorflow as tf
@@ -55,7 +56,7 @@ class HyperparameterTuningEnvironment:
             model = build_classification_model(look_back, units, self.forecast_horizon, learning_rate)
             model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, verbose=0)
             y_val_pred = model.predict(X_val, verbose=0)
-            preds = (y_val_pred > 0.5).astype(int)
+            best_threshold, preds = tune_threshold_pr(y_val, y_val_pred, self.forecast_horizon)
             try:
                 reward = f1_score(y_val.flatten(), preds.flatten(), zero_division=0)
             except Exception as e:
@@ -303,26 +304,15 @@ def optimize_and_train_classification(train_data, eval_data, forecast_horizon, w
 
     eval_probs = model.predict(X_eval, verbose=0)
 
-    # ROC-based threshold tuning on evaluation set (if not provided)
+    # Use PR curve–based threshold tuning on evaluation data
     if grid_threshold is None:
-        fpr, tpr, roc_thresholds = roc_curve(y_eval.flatten(), eval_probs.flatten())
-        best_acc = -1
-        best_threshold = None
-        best_preds = None
-        for t in roc_thresholds:
-            preds_temp = (eval_probs > t).astype(int)
-            acc_temp, _, _, _, _ = evaluate_metrics(y_eval, preds_temp, forecast_horizon)
-            if acc_temp > best_acc:
-                best_acc = acc_temp
-                best_threshold = t
-                best_preds = preds_temp
-        threshold_used = best_threshold
-        preds = best_preds
+        best_threshold, preds = tune_threshold_pr(y_eval, eval_probs, forecast_horizon)
     else:
-        threshold_used = grid_threshold
+        best_threshold = grid_threshold
         preds = (eval_probs > grid_threshold).astype(int)
 
     avg_acc, avg_prec, avg_rec, avg_f1, avg_spec = evaluate_metrics(y_eval, preds, forecast_horizon)
+
     result = {
         'type': window_type,
         'forecast_horizon': forecast_horizon,
@@ -331,7 +321,7 @@ def optimize_and_train_classification(train_data, eval_data, forecast_horizon, w
         'batch_size': batch_size,
         'learning_rate': learning_rate,
         'epochs_run': epochs_run,
-        'threshold': threshold_used,
+        'threshold': best_threshold,
         'accuracy': avg_acc,
         'precision': avg_prec,
         'recall': avg_rec,
@@ -339,9 +329,23 @@ def optimize_and_train_classification(train_data, eval_data, forecast_horizon, w
         'specificity': avg_spec
     }
     print(
-        f"[Classification - {window_type}] Metrics (horizon={forecast_horizon}): Accuracy={avg_acc:.5f}, F1={avg_f1:.5f}, Threshold={threshold_used:.2f}")
+        f"[Classification - {window_type}] Metrics (horizon={forecast_horizon}): Accuracy={avg_acc:.5f}, F1={avg_f1:.5f}, Threshold={best_threshold:.2f}")
     return result
 
+def tune_threshold_pr(y_true, probs, forecast_horizon):
+    precision_vals, recall_vals, thresholds = precision_recall_curve(y_true.flatten(), probs.flatten())
+    best_f1 = -1
+    best_threshold = 0.5  # default value
+    for i, t in enumerate(thresholds):
+        if precision_vals[i] + recall_vals[i] > 0:
+            f1 = 2 * precision_vals[i] * recall_vals[i] / (precision_vals[i] + recall_vals[i])
+        else:
+            f1 = 0
+        if f1 > best_f1:
+            best_f1 = f1
+            best_threshold = t
+    preds = (probs > best_threshold).astype(int)
+    return best_threshold, preds
 
 def process_window_classification(window_config, data, forecast_horizon, hyperparams, global_threshold=None,
                                   eval_split='test'):
@@ -378,9 +382,6 @@ def generate_sliding_windows():
     ]
 
 
-
-# =================== Save Results ===================
-
 def save_results(results, csv_path):
     if results:
         results_df = pd.DataFrame(results)
@@ -390,8 +391,9 @@ def save_results(results, csv_path):
         results_df = pd.concat([results_df, pd.DataFrame([avg_row])], ignore_index=True)
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
         results_df.to_csv(csv_path, index=False)
+        cols_to_show = ['type', 'accuracy', 'precision', 'recall', 'f1_score', 'specificity', 'threshold']
         print("\nFinal classification results:")
-        print(results_df[['type', 'accuracy', 'precision', 'recall', 'f1_score', 'specificity']].to_string(index=False))
+        print(results_df[cols_to_show].to_string(index=False))
     else:
         print("No valid classification results generated.")
 

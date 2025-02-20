@@ -5,7 +5,8 @@ import random
 import warnings
 import time
 
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, roc_curve
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, \
+    precision_recall_curve
 from sklearn.preprocessing import MinMaxScaler
 
 import tensorflow as tf
@@ -78,6 +79,7 @@ def set_global_config(seed=42):
     np.random.seed(seed)
     tf.random.set_seed(seed)
     tf.keras.utils.set_random_seed(seed)
+    optuna.samplers.TPESampler(seed=seed)
 
 
 # ==============================================================================
@@ -175,13 +177,15 @@ def evaluate_metrics(y_true, y_pred, forecast_horizon):
 # ==============================================================================
 # Bayesian Optimization for Hyperparameters using Optuna (Classification)
 # ==============================================================================
-def bayesian_search_hyperparameters_classification(train_scaled, validate_scaled, forecast_horizon, search_space, time_limit=600):
+def bayesian_search_hyperparameters_classification(train_scaled, validate_scaled, forecast_horizon, search_space,
+                                                   time_limit=600):
     def objective(trial):
         # Sample hyperparameters
         look_back = trial.suggest_int('look_back', search_space['look_back'][0], search_space['look_back'][1])
         units = trial.suggest_int('units', search_space['units'][0], search_space['units'][1])
         batch_size = trial.suggest_int('batch_size', search_space['batch_size'][0], search_space['batch_size'][1])
-        learning_rate = trial.suggest_float('learning_rate', search_space['learning_rate'][0], search_space['learning_rate'][1])
+        learning_rate = trial.suggest_float('learning_rate', search_space['learning_rate'][0],
+                                            search_space['learning_rate'][1])
         epochs = trial.suggest_int('epochs', search_space['epochs'][0], search_space['epochs'][1])
 
         # Create datasets
@@ -209,6 +213,22 @@ def bayesian_search_hyperparameters_classification(train_scaled, validate_scaled
     study.optimize(objective, timeout=time_limit)
     print(f"Best hyperparameters: {study.best_params} with validation accuracy: {study.best_value:.4f}")
     return study.best_params
+
+
+def tune_threshold_pr(y_true, probs, forecast_horizon):
+    precision, recall, thresholds = precision_recall_curve(y_true.flatten(), probs.flatten())
+    best_f1 = -1
+    best_threshold = 0.5  # default value
+    for i, t in enumerate(thresholds):
+        if precision[i] + recall[i] > 0:
+            f1 = 2 * precision[i] * recall[i] / (precision[i] + recall[i])
+        else:
+            f1 = 0
+        if f1 > best_f1:
+            best_f1 = f1
+            best_threshold = t
+    preds = (probs > best_threshold).astype(int)
+    return best_threshold, preds
 
 
 # ==============================================================================
@@ -288,7 +308,7 @@ def process_window_classification(window_config, data, forecast_horizon, search_
     )
     epochs_run = len(history.history['loss'])
 
-    # Use the validation set for threshold selection (always the same for hyperparameter tuning)
+    # Use the validation set for threshold tuning using PR curve
     X_val, y_val = create_dataset_classification(validate_scaled, look_back, forecast_horizon)
     if len(X_val) == 0:
         print(f"[Classification - {window_config['type']}] Insufficient validation data for threshold tuning.")
@@ -296,11 +316,9 @@ def process_window_classification(window_config, data, forecast_horizon, search_
     X_val = X_val.reshape((X_val.shape[0], look_back, 1))
     val_probs = model.predict(X_val, verbose=0)
 
-    # Determine best threshold using Youden's J statistic
-    fpr, tpr, thresholds = roc_curve(y_val.flatten(), val_probs.flatten())
-    best_threshold = thresholds[np.argmax(tpr - fpr)]
+    best_threshold, _ = tune_threshold_pr(y_val, val_probs, forecast_horizon)
 
-    # Predict probabilities on evaluation data and apply threshold
+    # Predict on evaluation data using the tuned threshold
     eval_probs = model.predict(X_eval, verbose=0)
     eval_preds = (eval_probs > best_threshold).astype(int)
 

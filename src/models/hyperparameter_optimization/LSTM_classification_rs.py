@@ -5,28 +5,30 @@ import random
 import warnings
 import time
 
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, roc_curve
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, \
+    precision_recall_curve
 from sklearn.preprocessing import MinMaxScaler
 
 import tensorflow as tf
 from keras.models import Sequential
 from keras.layers import LSTM, Dense, Input
+from keras.optimizers import Nadam
+
 
 # ==============================================================================
 # Main Entry Point
 # ==============================================================================
 def main():
-    # Define file paths and hyperparameters
     DATA_PATH = '../../../data/raw/USDEUR=X_max_1d.csv'
     CLASSIFICATION_CSV_PATH = 'results/LSTM_classification_rs.csv'
     FORECAST_HORIZONS_CLF = [1]
 
     search_space = {
-        'epochs': (10, 50),          # integer between 10 and 50
-        'look_back': (30, 120),        # integer between 30 and 120
-        'units': (50, 200),            # integer between 50 and 200
-        'batch_size': (16, 128),       # integer between 16 and 128
-        'learning_rate': (0.0001, 0.01)  # float between 0.0001 and 0.01
+        'epochs': (10, 50),
+        'look_back': (30, 120),
+        'units': (50, 200),
+        'batch_size': (16, 128),
+        'learning_rate': (0.0001, 0.01)
     }
 
     # Configure TensorFlow and set seeds
@@ -57,7 +59,8 @@ def main():
                 print(f"No valid configuration found for window {window['type']}. Skipping test evaluation.")
                 continue
 
-            print(f"==> Best hyperparameters for {window['type']}: {best_hyperparams} with threshold {best_threshold:.2f}")
+            print(
+                f"==> Best hyperparameters for {window['type']}: {best_hyperparams} with threshold {best_threshold:.2f}")
             print("Evaluating on test split with best hyperparameters...")
             test_result = process_window_classification(
                 window, data, horizon, best_hyperparams, global_threshold=best_threshold, eval_split='test'
@@ -76,8 +79,6 @@ def main():
 def configure_tf():
     os.environ['TF_DETERMINISTIC_OPS'] = '1'
     os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
-
-    # Existing GPU check
     gpu_devices = tf.config.list_physical_devices('GPU')
     if gpu_devices:
         print(f"GPU is available. GPU detected: {gpu_devices}")
@@ -154,7 +155,7 @@ def build_classification_model(look_back, units, forecast_horizon, learning_rate
         LSTM(units, return_sequences=False),
         Dense(forecast_horizon, activation='sigmoid')
     ])
-    optimizer = tf.keras.optimizers.Nadam(learning_rate=learning_rate)
+    optimizer = Nadam(learning_rate=learning_rate)
     model.compile(loss='binary_focal_crossentropy', optimizer=optimizer)
     return model
 
@@ -188,21 +189,21 @@ def evaluate_metrics(y_true, y_pred, forecast_horizon):
 # ==============================================================================
 # Training and Evaluation (Classification)
 # ==============================================================================
-def optimize_and_train_classification(train_data, eval_data, forecast_horizon, window_type, hyperparams, grid_threshold=None):
+def optimize_and_train_classification(train_data, eval_data, forecast_horizon, window_type, hyperparams,
+                                      grid_threshold=None):
     look_back = hyperparams['look_back']
     units = hyperparams['units']
     batch_size = hyperparams['batch_size']
     learning_rate = hyperparams['learning_rate']
     epochs = hyperparams['epochs']
 
-    X_train, y_train = create_dataset_classification(train_data, look_back, forecast_horizon)
-    X_eval, y_eval = create_dataset_classification(eval_data, look_back, forecast_horizon)
+    X_train, y_train = create_dataset_classification(train_data, look_back, forecast_horizon, threshold=0)
+    X_eval, y_eval = create_dataset_classification(eval_data, look_back, forecast_horizon, threshold=0)
 
     if len(X_train) == 0 or len(X_eval) == 0:
         print(f"[Classification - {window_type}] Insufficient data for the given parameters.")
         return None
 
-    # Reshape data for LSTM input: (samples, look_back, features)
     X_train = X_train.reshape((X_train.shape[0], look_back, 1))
     X_eval = X_eval.reshape((X_eval.shape[0], look_back, 1))
 
@@ -210,29 +211,13 @@ def optimize_and_train_classification(train_data, eval_data, forecast_horizon, w
     history = model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, verbose=0)
     epochs_run = len(history.history['loss'])
 
-    # Get prediction probabilities
     eval_probs = model.predict(X_eval, verbose=0)
 
-    # -----------------------------------------------
-    # ROC Curve–Based Threshold Tuning on Evaluation Data
-    # -----------------------------------------------
+    # Use PR Curve–Based Threshold Tuning on Evaluation Data
     if grid_threshold is None:
-        # Compute ROC curve using flattened arrays (assuming forecast_horizon == 1)
-        fpr, tpr, roc_thresholds = roc_curve(y_eval.flatten(), eval_probs.flatten())
-        best_acc = -1
-        best_threshold = None
-        best_preds = None
-        for t in roc_thresholds:
-            preds_temp = (eval_probs > t).astype(int)
-            acc_temp, _, _, _, _ = evaluate_metrics(y_eval, preds_temp, forecast_horizon)
-            if acc_temp > best_acc:
-                best_acc = acc_temp
-                best_threshold = t
-                best_preds = preds_temp
-        threshold_used = best_threshold
-        preds = best_preds
+        best_threshold, preds = tune_threshold_pr(y_eval, eval_probs, forecast_horizon)
     else:
-        threshold_used = grid_threshold
+        best_threshold = grid_threshold
         preds = (eval_probs > grid_threshold).astype(int)
 
     avg_acc, avg_prec, avg_rec, avg_f1, avg_spec = evaluate_metrics(y_eval, preds, forecast_horizon)
@@ -245,7 +230,7 @@ def optimize_and_train_classification(train_data, eval_data, forecast_horizon, w
         'batch_size': batch_size,
         'learning_rate': learning_rate,
         'epochs_run': epochs_run,
-        'threshold': threshold_used,
+        'threshold': best_threshold,
         'accuracy': avg_acc,
         'precision': avg_prec,
         'recall': avg_rec,
@@ -253,23 +238,18 @@ def optimize_and_train_classification(train_data, eval_data, forecast_horizon, w
         'specificity': avg_spec
     }
     print(
-        f"[Classification - {window_type}] Metrics (horizon={forecast_horizon}): "
-        f"Accuracy={avg_acc:.5f}, Precision={avg_prec:.5f}, Recall={avg_rec:.5f}, "
-        f"F1={avg_f1:.5f}, Specificity={avg_spec:.5f}, EpochsRun={epochs_run}, "
-        f"Threshold={threshold_used:.2f}"
-    )
+        f"[Classification - {window_type}] Metrics (horizon={forecast_horizon}): Accuracy={avg_acc:.5f}, F1={avg_f1:.5f}, Threshold={best_threshold:.2f}")
     return result
 
 
 # ==============================================================================
 # Processing Each Sliding Window (Classification)
 # ==============================================================================
-def process_window_classification(window_config, data, forecast_horizon, hyperparams, global_threshold=None, eval_split='test'):
+def process_window_classification(window_config, data, forecast_horizon, hyperparams, global_threshold=None,
+                                  eval_split='test'):
     n_samples = len(data)
-    # Get training indices
     train_start = int(window_config['train'][0] * n_samples)
     train_end = int(window_config['train'][1] * n_samples)
-    # Get evaluation indices based on eval_split ('validate' or 'test')
     eval_start = int(window_config[eval_split][0] * n_samples)
     eval_end = int(window_config[eval_split][1] * n_samples)
 
@@ -280,17 +260,13 @@ def process_window_classification(window_config, data, forecast_horizon, hyperpa
         print(f"Skipping {window_config['type']} - insufficient data in {eval_split} split")
         return None
 
-    # Reshape data for LSTM input: (samples, 1)
     train_data = train_raw.reshape(-1, 1)
     eval_data = eval_raw.reshape(-1, 1)
-
-    # Apply MinMax scaling to both training and evaluation data
     train_data_scaled, eval_data_scaled, _ = apply_minmax_scaling(train_data, eval_data)
 
-    return optimize_and_train_classification(
-        train_data_scaled, eval_data_scaled, forecast_horizon,
-        window_config['type'] + "_" + eval_split, hyperparams, grid_threshold=global_threshold
-    )
+    return optimize_and_train_classification(train_data_scaled, eval_data_scaled, forecast_horizon,
+                                             window_config['type'] + "_" + eval_split,
+                                             hyperparams, grid_threshold=global_threshold)
 
 
 # ==============================================================================
@@ -304,7 +280,6 @@ def random_search_classification(window_config, data, forecast_horizon, search_s
     start_time = time.time()
 
     while time.time() - start_time < time_limit:
-        # Generate a random hyperparameter configuration from the intervals
         hyperparams = {
             'epochs': random.randint(search_space['epochs'][0], search_space['epochs'][1]),
             'look_back': random.randint(search_space['look_back'][0], search_space['look_back'][1]),
@@ -312,8 +287,8 @@ def random_search_classification(window_config, data, forecast_horizon, search_s
             'batch_size': random.randint(search_space['batch_size'][0], search_space['batch_size'][1]),
             'learning_rate': random.uniform(search_space['learning_rate'][0], search_space['learning_rate'][1])
         }
-        # Evaluate on the validation split (grid_threshold=None allows threshold tuning)
-        result = process_window_classification(window_config, data, forecast_horizon, hyperparams, global_threshold=None, eval_split='validate')
+        result = process_window_classification(window_config, data, forecast_horizon, hyperparams,
+                                               global_threshold=None, eval_split='validate')
         if result is None:
             continue
 
@@ -325,6 +300,22 @@ def random_search_classification(window_config, data, forecast_horizon, search_s
             best_threshold = result['threshold']
 
     return best_hyperparams, best_threshold, best_result
+
+
+def tune_threshold_pr(y_true, probs, forecast_horizon):
+    precision_vals, recall_vals, thresholds = precision_recall_curve(y_true.flatten(), probs.flatten())
+    best_f1 = -1
+    best_threshold = 0.5  # default value
+    for i, t in enumerate(thresholds):
+        if precision_vals[i] + recall_vals[i] > 0:
+            f1 = 2 * precision_vals[i] * recall_vals[i] / (precision_vals[i] + recall_vals[i])
+        else:
+            f1 = 0
+        if f1 > best_f1:
+            best_f1 = f1
+            best_threshold = t
+    preds = (probs > best_threshold).astype(int)
+    return best_threshold, preds
 
 
 # ==============================================================================
@@ -339,10 +330,9 @@ def save_results(results, csv_path):
         results_df = pd.concat([results_df, pd.DataFrame([avg_row])], ignore_index=True)
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
         results_df.to_csv(csv_path, index=False)
+        cols_to_show = ['type', 'accuracy', 'precision', 'recall', 'f1_score', 'specificity', 'threshold']
         print("\nFinal classification results:")
-        print(
-            results_df[['type', 'accuracy', 'precision', 'recall', 'f1_score', 'specificity']].to_string(index=False)
-        )
+        print(results_df[cols_to_show].to_string(index=False))
     else:
         print("No valid classification results generated.")
 
