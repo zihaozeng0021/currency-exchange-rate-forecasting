@@ -60,13 +60,11 @@ def run_python_file(file_path):
 
 if __name__ == "__main__":
     paths = [
-        'LSTM_classification_bo.py',
-        'LSTM_classification_ga.py',
-        'LSTM_classification_gs.py',
-        'LSTM_classification_rs.py',
-        'LSTM_classification_rl.py',
-        'LSTM_classification_hb.py',
-        'LSTM_classification_sa.py',
-        'LSTM_regression_bo.py'
+        'GRU-LSTM_classification_bo.py',
+        'GRU-LSTM_classification_rl.py',
+        'GRU-LSTM_regression_bo.py',
+        'TCN-LSTM_classification_bo.py',
+        'TCN-LSTM_classification_rl.py',
+        'TCN-LSTM_regression_bo.py'
     ]
     run_python_files(paths)
