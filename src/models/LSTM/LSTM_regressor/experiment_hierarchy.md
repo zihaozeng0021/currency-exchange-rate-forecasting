@@ -20,7 +20,7 @@ graph TD
     8 --> 19[19, + Adamgrad optimizer]
     8 --> 20[20, + Adadelta optimizer]
     8 --> 21[21, + Ftrl optimizer]
-    15 --> 22[Best so far]
+    15 --> 22[Applied best parameters]
     
     
     classDef brightBlue fill:#00BFFF,stroke:#333,stroke-width:2px;

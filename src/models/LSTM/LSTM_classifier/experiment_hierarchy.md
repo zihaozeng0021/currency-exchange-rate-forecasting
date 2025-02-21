@@ -30,7 +30,7 @@ graph TD
     22 --> 29[29, + Precision-Recall curve]
     22 --> 30[30, + Cost-Sensitive Thresholding]
     22 --> 31[31, + Adaptive Thresholding]
-    28 --> 32[Best so far]
+    29 --> 32[Applied best parameters]
     
     
     

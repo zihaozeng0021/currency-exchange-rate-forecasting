@@ -12,22 +12,26 @@ import tensorflow as tf
 from keras.models import Sequential
 from keras.layers import LSTM, Dense, Input
 
+
 # ==============================================================================
 # Main Entry Point
 # ==============================================================================
 def main():
-    # Define file paths and hyperparameters
+    # Define file paths and forecast horizon(s)
     DATA_PATH = './../../../../data/raw/USDEUR=X_max_1d.csv'
-    REGRESSION_CSV_PATH = './results/regression_results15.csv'
+    REGRESSION_CSV_PATH = './results/regression_results22.csv'
     FORECAST_HORIZONS_REG = [1]
 
-    hyperparams = {
-        'look_back': 60,
-        'units': 128,
-        'batch_size': 64,
-        'learning_rate': 1e-3,
-        'epochs': 10
-    }
+    # Define hyperparameters for each window using the new values:
+    # Format: look_back, units, batch_size, learning_rate, epochs
+    hyperparams_list = [
+        {'look_back': 64, 'units': 106, 'batch_size': 19, 'learning_rate': 0.0007116612752690437, 'epochs': 43},
+        {'look_back': 64, 'units': 106, 'batch_size': 36, 'learning_rate': 0.008288392887002095, 'epochs': 28},
+        {'look_back': 70, 'units': 130, 'batch_size': 76, 'learning_rate': 0.007695744948116967, 'epochs': 45},
+        {'look_back': 37, 'units': 64, 'batch_size': 67, 'learning_rate': 0.0040535398687766, 'epochs': 47},
+        {'look_back': 117, 'units': 178, 'batch_size': 31, 'learning_rate': 0.0025691081407215755, 'epochs': 35},
+        {'look_back': 39, 'units': 98, 'batch_size': 62, 'learning_rate': 0.007908780448630736, 'epochs': 33}
+    ]
 
     # Configure TensorFlow and set seeds
     configure_tf()
@@ -39,12 +43,15 @@ def main():
 
     results = []
     start_time = time.time()
-    for window in windows:
+
+    # Loop through windows with corresponding hyperparameters
+    for i, window in enumerate(windows):
         print(f"\n=== Processing {window['type']} ===")
         print(f"Training range: {window['train'][0] * 100:.1f}% - {window['train'][1] * 100:.1f}%")
         print(f"Testing range: {window['test'][0] * 100:.1f}% - {window['test'][1] * 100:.1f}%")
+        current_hyperparams = hyperparams_list[i]
         for horizon in FORECAST_HORIZONS_REG:
-            result = process_window_regression(window, data, horizon, hyperparams)
+            result = process_window_regression(window, data, horizon, current_hyperparams)
             if result is not None:
                 results.append(result)
 
@@ -107,12 +114,12 @@ def inverse_standard_scaling(scaled_data, scaler):
 # ==============================================================================
 def generate_sliding_windows():
     return [
-        {'type': 'window_1', 'train': (0.0, 0.16), 'test': (0.16, 0.2)},
-        {'type': 'window_2', 'train': (0.16, 0.32), 'test': (0.32, 0.36)},
-        {'type': 'window_3', 'train': (0.32, 0.48), 'test': (0.48, 0.52)},
-        {'type': 'window_4', 'train': (0.48, 0.64), 'test': (0.64, 0.68)},
-        {'type': 'window_5', 'train': (0.64, 0.8), 'test': (0.8, 0.84)},
-        {'type': 'window_6', 'train': (0.8, 0.96), 'test': (0.96, 1.0)}
+        {'type': 'window_1', 'train': (0.0, 0.12), 'test': (0.16, 0.2)},
+        {'type': 'window_2', 'train': (0.16, 0.28), 'test': (0.32, 0.36)},
+        {'type': 'window_3', 'train': (0.32, 0.44), 'test': (0.48, 0.52)},
+        {'type': 'window_4', 'train': (0.48, 0.6), 'test': (0.64, 0.68)},
+        {'type': 'window_5', 'train': (0.64, 0.76), 'test': (0.8, 0.84)},
+        {'type': 'window_6', 'train': (0.8, 0.92), 'test': (0.96, 1.0)}
     ]
 
 
