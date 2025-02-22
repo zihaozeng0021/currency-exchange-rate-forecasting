@@ -21,7 +21,7 @@ import optuna
 def main():
     # Define file paths and hyperparameters
     DATA_PATH = 'data/EURUSD.csv'
-    REGRESSION_CSV_PATH = 'results/LSTM.csv'
+    REGRESSION_CSV_PATH = 'results/GRU-LSTM.csv'
     FORECAST_HORIZONS_REG = [1]
 
     search_space = {
