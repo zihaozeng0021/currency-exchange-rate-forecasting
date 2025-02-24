@@ -10,7 +10,7 @@ from sklearn.preprocessing import StandardScaler
 
 import tensorflow as tf
 from keras.models import Sequential
-from keras.layers import LSTM, Dense, Input, GRU
+from keras.layers import LSTM, Dense, Input
 
 import optuna
 
@@ -21,7 +21,7 @@ import optuna
 def main():
     # Define file paths and hyperparameters
     DATA_PATH = 'data/EURUSD.csv'
-    REGRESSION_CSV_PATH = 'results/GRU-LSTM.csv'
+    REGRESSION_CSV_PATH = 'results/LSTM.csv'
     FORECAST_HORIZONS_REG = [1]
 
     search_space = {
@@ -49,7 +49,7 @@ def main():
     for horizon in FORECAST_HORIZONS_REG:
         print(f"\n=== Processing FORECAST_HORIZON {horizon} ===")
         best_hp = bayesian_search_hyperparameters(train_scaled, test_scaled, scaler, horizon,
-                                                  search_space, time_limit=3600)
+                                                  search_space, time_limit=600)
         result = train_and_evaluate_regression(train_scaled, test_scaled, horizon, "80-20 split",
                                                best_hp, scaler)
         if result is not None:
@@ -134,7 +134,6 @@ def create_dataset_regression(dataset, look_back=1, forecast_horizon=1):
 def build_regression_model(look_back, units, forecast_horizon, learning_rate):
     model = Sequential([
         Input(shape=(look_back, 1)),
-        GRU(units, return_sequences=True),
         LSTM(units, return_sequences=False),
         Dense(forecast_horizon, activation='linear')
     ])
@@ -226,7 +225,7 @@ def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
 # Bayesian Optimization for Hyperparameters using Optuna
 # ==============================================================================
 def bayesian_search_hyperparameters(train_scaled, test_scaled, scaler, forecast_horizon, search_space,
-                                    time_limit=3600):
+                                    time_limit=600):
     def objective(trial):
         # Sample hyperparameters using the intervals from search_space
         epochs = trial.suggest_int('epochs', search_space['epochs'][0], search_space['epochs'][1])

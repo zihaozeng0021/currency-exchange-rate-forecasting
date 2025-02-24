@@ -1,0 +1,2 @@
+forecast_horizon,look_back,units,batch_size,learning_rate,epochs_run,mse,mae,rmse,r2_score,coverage_probability (%),interval_width,best_hyperparameters
+1,87,80,72,0.0007599028602032013,21,3.331168697250463e-05,0.004558160393075511,0.005771627757617831,0.9871687332331198,99.85795454545455,0.043850183,"{'epochs': 21, 'look_back': 87, 'units': 80, 'batch_size': 72, 'learning_rate': 0.0007599028602032013}"
