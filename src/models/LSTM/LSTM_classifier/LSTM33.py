@@ -181,41 +181,43 @@ def evaluate_metrics(y_true, y_pred, forecast_horizon):
 # ==============================================================================
 # Moving Window Evaluation on the Test Set for Classification
 # ==============================================================================
-def moving_window_evaluation_classification(train_data, test_data, forecast_horizon, window_type, hyperparams,
-                                            max_train_size=520):
-    combined_data = train_data.copy()  # initialize with the original training data
+def moving_window_evaluation_classification(train_data, test_data, forecast_horizon, window_type, hyperparams, max_train_size=520):
+    combined_data = train_data.copy()
     predictions = []
     ground_truth = []
     look_back = hyperparams['look_back']
 
-    # Iterate through the test set (ensuring forecast_horizon samples are available)
-    for i in range(len(test_data) - forecast_horizon + 1):
-        # Use only the last max_train_size samples from combined_data as training data
-        if combined_data.shape[0] > max_train_size:
-            current_train_data = combined_data[-max_train_size:]
-        else:
-            current_train_data = combined_data
+    start_idx = 0
+    while combined_data.shape[0] < max_train_size and start_idx < len(test_data):
+        combined_data = np.vstack([combined_data, test_data[start_idx].reshape(1, 1)])
+        start_idx += 1
+
+    for i in range(start_idx, len(test_data) - forecast_horizon + 1):
+        current_train_data = combined_data[-max_train_size:]
 
         # Skip if insufficient data for forming an input sequence
         if current_train_data.shape[0] < look_back:
+            combined_data = np.vstack([combined_data, test_data[i].reshape(1, 1)])
             continue
 
         # Create training samples using the directional labeling
         X_train, y_train = create_dataset_classification_direction(current_train_data, look_back, forecast_horizon)
         if X_train.shape[0] == 0:
+            combined_data = np.vstack([combined_data, test_data[i].reshape(1, 1)])
+            if combined_data.shape[0] > max_train_size:
+                combined_data = combined_data[1:]
             continue
 
         # Reshape input for LSTM: (samples, look_back, features)
         X_train = X_train.reshape((X_train.shape[0], look_back, 1))
-        # Build and train the model on the current training window
-        model = build_classification_model(look_back, hyperparams['units'], forecast_horizon,
-                                           hyperparams['learning_rate'])
+
+        model = build_classification_model(look_back, hyperparams['units'], forecast_horizon, hyperparams['learning_rate'])
         model.fit(X_train, y_train, epochs=hyperparams['epochs'], batch_size=hyperparams['batch_size'], verbose=0)
 
         # Prepare the prediction input (last 'look_back' values from current training data)
         X_pred = current_train_data[-look_back:].reshape((1, look_back, 1))
         prob = model.predict(X_pred, verbose=0)
-        pred = (prob > 0.5).astype(int)[0]  # standard 0.5 threshold for binary classification
+        pred = (prob > 0.5).astype(int)[0]
         predictions.append(pred)
 
         # Compute ground truth label using the directional rule:
@@ -225,8 +227,9 @@ def moving_window_evaluation_classification(train_data, test_data, forecast_hori
         true_label = (next_vals > last_val).astype(int)
         ground_truth.append(true_label)
 
-        # Append the current test sample to the combined data to update the training set
         combined_data = np.vstack([combined_data, test_data[i].reshape(1, 1)])
+        if combined_data.shape[0] > max_train_size:
+            combined_data = combined_data[1:]
 
     predictions = np.array(predictions)
     ground_truth = np.array(ground_truth)
@@ -253,6 +256,7 @@ def moving_window_evaluation_classification(train_data, test_data, forecast_hori
         f"F1 Score={avg_f1:.5f}, Specificity={avg_spec:.5f}, Predictions={len(predictions)}"
     )
     return result
+
 
 
 # ==============================================================================
