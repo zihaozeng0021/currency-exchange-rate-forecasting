@@ -84,17 +84,13 @@ def set_global_config(seed=42):
 # Data Loading and Preprocessing (Multivariate)
 # ==============================================================================
 def load_data(data_path):
-    # Load currency data and rename the 'Close' column to 'currency'
     df_currency = pd.read_csv(data_path, index_col='Date', parse_dates=True)
     df_currency = df_currency[['Close']].rename(columns={'Close': 'currency'})
-    # Construct FTSE file path based on the same directory as the currency data
     ftse_path = os.path.join(os.path.dirname(data_path), 'ftse.csv')
     df_ftse = pd.read_csv(ftse_path, index_col='Date', parse_dates=True)
     df_ftse = df_ftse[['Close']].rename(columns={'Close': 'ftse'})
-    # Merge on Date (inner join on the currency data's dates)
     df_merged = df_currency.merge(df_ftse, left_index=True, right_index=True, how='inner')
     df_merged.dropna(inplace=True)
-    # Return as a NumPy array with two columns: [currency, ftse]
     return df_merged.values
 
 
@@ -108,14 +104,7 @@ def apply_standard_scaling(train_data, test_data):
     return train_scaled, test_scaled, scaler
 
 
-def inverse_standard_scaling(data, scaler):
-    # Inverse transform for a multivariate array
-    return scaler.inverse_transform(data)
-
-
 def inverse_standard_scaling_target(scaled_target, scaler):
-    # Inverse transform only for the target ('currency' assumed to be at index 0)
-    # scaled_target: shape (n_samples, forecast_horizon)
     return scaled_target * scaler.scale_[0] + scaler.mean_[0]
 
 
@@ -139,9 +128,7 @@ def generate_sliding_windows():
 def create_dataset_regression(dataset, look_back=1, forecast_horizon=1):
     X, y = [], []
     for i in range(len(dataset) - look_back - forecast_horizon + 1):
-        # Use all features for the input sequence
         X_seq = dataset[i: i + look_back, :]
-        # Use the 'currency' column (assumed to be at index 0) as the target
         y_seq = dataset[i + look_back: i + look_back + forecast_horizon, 0]
         X.append(X_seq)
         y.append(y_seq)

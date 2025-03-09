@@ -10,7 +10,7 @@ from sklearn.preprocessing import StandardScaler
 
 import tensorflow as tf
 from keras.models import Sequential
-from keras.layers import LSTM, Dense, Input, GRU
+from keras.layers import LSTM, Dense, Input
 
 import optuna
 
@@ -27,7 +27,7 @@ def main():
         'JPYUSD': 'data/JPYUSD.csv',
         'NZDUSD': 'data/NZDUSD.csv'
     }
-    AGGREGATED_REGRESSION_CSV_PATH = 'results/GRU-LSTM.csv'
+    AGGREGATED_REGRESSION_CSV_PATH = 'results/multivariate_LSTM.csv'
     FORECAST_HORIZONS_REG = [1]
 
     search_space = {
@@ -48,20 +48,22 @@ def main():
     # Loop over each currency pair
     for pair_name, data_path in currency_pairs.items():
         print(f"\n=== Processing currency pair: {pair_name} ===")
-        data = load_data(data_path)
+        data = load_data(data_path)  # Merges currency data with FTSE data based on Date
         data = smooth_data(data, window=30)
         train_raw, test_raw = split_data(data, train_ratio=0.8)
-        train_raw = train_raw.reshape(-1, 1)
-        test_raw = test_raw.reshape(-1, 1)
+        # Note: No need to reshape as data is multivariate
         train_scaled, test_scaled, scaler = apply_standard_scaling(train_raw, test_raw)
+
+        # Determine number of features (should be 2: Currency_Close and FTSE_Close)
+        num_features = train_scaled.shape[1]
 
         # Loop over forecast horizons
         for horizon in FORECAST_HORIZONS_REG:
             print(f"\n=== Processing FORECAST_HORIZON {horizon} for {pair_name} ===")
             best_hp = bayesian_search_hyperparameters(train_scaled, test_scaled, scaler, horizon,
-                                                      search_space, time_limit=600)
+                                                      search_space, num_features, time_limit=600)
             result = train_and_evaluate_regression(train_scaled, test_scaled, horizon, "80-20 split",
-                                                   best_hp, scaler)
+                                                   best_hp, scaler, num_features)
             if result is not None:
                 result['best_hyperparameters'] = best_hp
                 result['currency_pair'] = pair_name  # Record the currency pair in the results
@@ -99,18 +101,24 @@ def set_global_config(seed=42):
 # Data Loading and Preprocessing
 # ==============================================================================
 def load_data(data_path):
-    df = pd.read_csv(data_path, index_col='Date', parse_dates=True)
-    df = df.replace([np.inf, -np.inf], np.nan).dropna()
-    return df['Close'].values
+    df_currency = pd.read_csv(data_path, index_col='Date', parse_dates=True)
+    df_ftse = pd.read_csv('data/ftse.csv', index_col='Date', parse_dates=True)
+    df_currency = df_currency.rename(columns={"Close": "Currency_Close"})
+    df_ftse = df_ftse.rename(columns={"Close": "FTSE_Close"})
+    df_merged = df_currency.join(df_ftse[['FTSE_Close']], how='inner')
+    df_merged = df_merged.replace([np.inf, -np.inf], np.nan).dropna()
+    return df_merged[['Currency_Close', 'FTSE_Close']].values
 
 
 def smooth_data(data, window=30):
-    if isinstance(data, np.ndarray):
+    if data.ndim == 1:
         data_series = pd.Series(data)
+        smoothed_series = data_series.rolling(window=window, min_periods=1).mean()
+        return smoothed_series.values
     else:
-        data_series = data
-    smoothed_series = data_series.rolling(window=window, min_periods=1).mean()
-    return smoothed_series.values
+        df = pd.DataFrame(data)
+        smoothed_df = df.rolling(window=window, min_periods=1).mean()
+        return smoothed_df.values
 
 
 def split_data(data, train_ratio=0.8):
@@ -128,30 +136,39 @@ def apply_standard_scaling(train_data, test_data):
     return train_scaled, test_scaled, scaler
 
 
-def inverse_standard_scaling(scaled_data, scaler):
-    return scaler.inverse_transform(scaled_data)
+def inverse_standard_scaling(scaled_data, scaler, col_index=0):
+    """
+    Inverse transform for a single column from a StandardScaler fitted on multivariate data.
+    scaled_data: np.ndarray of shape (n_samples, 1) or (n_samples,)
+    Applies the inverse transformation using parameters from the specified column (default is 0).
+    """
+    return scaled_data * scaler.scale_[col_index] + scaler.mean_[col_index]
 
 
 # ==============================================================================
-# Dataset Creation for Regression
+# Dataset Creation for Regression (Multivariate)
 # ==============================================================================
 def create_dataset_regression(dataset, look_back=1, forecast_horizon=1):
+    """
+    Create dataset for multivariate regression.
+    X consists of all features over the look_back window.
+    y is the target series (first column: Currency_Close).
+    """
     X, y = [], []
     for i in range(len(dataset) - look_back - forecast_horizon + 1):
-        X_seq = dataset[i: i + look_back, 0]
-        y_seq = dataset[i + look_back: i + look_back + forecast_horizon, 0]
+        X_seq = dataset[i: i + look_back, :]  # All features
+        y_seq = dataset[i + look_back: i + look_back + forecast_horizon, 0]  # Only Currency_Close as target
         X.append(X_seq)
         y.append(y_seq)
     return np.array(X), np.array(y)
 
 
 # ==============================================================================
-# Model Building for Regression
+# Model Building for Regression (Multivariate)
 # ==============================================================================
-def build_regression_model(look_back, units, forecast_horizon, learning_rate):
+def build_regression_model(look_back, num_features, units, forecast_horizon, learning_rate):
     model = Sequential([
-        Input(shape=(look_back, 1)),
-        GRU(units, return_sequences=True),
+        Input(shape=(look_back, num_features)),
         LSTM(units, return_sequences=False),
         Dense(forecast_horizon, activation='linear')
     ])
@@ -164,7 +181,7 @@ def build_regression_model(look_back, units, forecast_horizon, learning_rate):
 # Training and Evaluation (Regression)
 # ==============================================================================
 def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
-                                  forecast_horizon, split_type, hyperparams, scaler):
+                                  forecast_horizon, split_type, hyperparams, scaler, num_features):
     look_back = hyperparams['look_back']
     units = hyperparams['units']
     batch_size = hyperparams['batch_size']
@@ -179,21 +196,19 @@ def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
         print(f"[Regression] Insufficient data for the given parameters.")
         return None
 
-    # Reshape data for LSTM input: (samples, look_back, features)
-    X_train = X_train.reshape((X_train.shape[0], look_back, 1))
-    X_test = X_test.reshape((X_test.shape[0], look_back, 1))
+    # X_train and X_test are already in shape (samples, look_back, num_features)
 
     # Build and train the model
-    model = build_regression_model(look_back, units, forecast_horizon, learning_rate)
+    model = build_regression_model(look_back, num_features, units, forecast_horizon, learning_rate)
     history = model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, verbose=0)
     epochs_run = len(history.history['loss'])
 
     # Predict in scaled space
     y_pred_test = model.predict(X_test, verbose=0)
 
-    # Inverse transform predictions and true targets back to original scale
-    y_pred_test_orig = inverse_standard_scaling(y_pred_test, scaler)
-    y_test_orig = inverse_standard_scaling(y_test, scaler)
+    # Inverse transform predictions and true targets back to original scale for the target column
+    y_pred_test_orig = inverse_standard_scaling(y_pred_test, scaler, col_index=0)
+    y_test_orig = inverse_standard_scaling(y_test, scaler, col_index=0)
 
     # Compute evaluation metrics on original scale
     y_test_flat = y_test_orig.flatten()
@@ -205,8 +220,8 @@ def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
 
     # Calculate prediction intervals using training residuals (on original scale)
     y_train_pred = model.predict(X_train, verbose=0)
-    y_train_orig = inverse_standard_scaling(y_train, scaler)
-    y_train_pred_orig = inverse_standard_scaling(y_train_pred, scaler)
+    y_train_orig = inverse_standard_scaling(y_train, scaler, col_index=0)
+    y_train_pred_orig = inverse_standard_scaling(y_train_pred, scaler, col_index=0)
     residuals = y_train_orig.flatten() - y_train_pred_orig.flatten()
     sigma = np.std(residuals)
     z = 1.96  # 95% confidence interval
@@ -243,7 +258,7 @@ def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
 # Bayesian Optimization for Hyperparameters using Optuna
 # ==============================================================================
 def bayesian_search_hyperparameters(train_scaled, test_scaled, scaler, forecast_horizon, search_space,
-                                    time_limit=3600):
+                                    num_features, time_limit=3600):
     def objective(trial):
         # Sample hyperparameters using the intervals from search_space
         epochs = trial.suggest_int('epochs', search_space['epochs'][0], search_space['epochs'][1])
@@ -268,14 +283,13 @@ def bayesian_search_hyperparameters(train_scaled, test_scaled, scaler, forecast_
             # Return a large error if there is insufficient data
             return 1e6
 
-        X_train = X_train.reshape((X_train.shape[0], look_back, 1))
-        X_test = X_test.reshape((X_test.shape[0], look_back, 1))
-
-        model = build_regression_model(look_back, units, forecast_horizon, learning_rate)
+        # Build model with the current candidate hyperparameters
+        model = build_regression_model(look_back, num_features, units, forecast_horizon, learning_rate)
         model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, verbose=0)
         y_test_pred = model.predict(X_test, verbose=0)
-        y_test_pred_orig = inverse_standard_scaling(y_test_pred, scaler)
-        y_test_orig = inverse_standard_scaling(y_test, scaler)
+        # Inverse transform for the target column only
+        y_test_pred_orig = inverse_standard_scaling(y_test_pred, scaler, col_index=0)
+        y_test_orig = inverse_standard_scaling(y_test, scaler, col_index=0)
         mse_val = mean_squared_error(y_test_orig.flatten(), y_test_pred_orig.flatten())
         return mse_val
 

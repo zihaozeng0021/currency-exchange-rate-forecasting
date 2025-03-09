@@ -19,9 +19,15 @@ import optuna
 # Main Entry Point
 # ==============================================================================
 def main():
-    # Define file paths and hyperparameters
-    DATA_PATH = 'data/EURUSD.csv'
-    REGRESSION_CSV_PATH = 'results/LSTM.csv'
+    # Define multiple currency pairs with their corresponding CSV file paths
+    currency_pairs = {
+        'AUDUSD': 'data/AUDUSD.csv',
+        'EURUSD': 'data/EURUSD.csv',
+        'GBPUSD': 'data/GBPUSD.csv',
+        'JPYUSD': 'data/JPYUSD.csv',
+        'NZDUSD': 'data/NZDUSD.csv'
+    }
+    AGGREGATED_REGRESSION_CSV_PATH = 'results/LSTM.csv'
     FORECAST_HORIZONS_REG = [1]
 
     search_space = {
@@ -36,28 +42,33 @@ def main():
     configure_tf()
     set_global_config(seed=42)
 
-    data = load_data(DATA_PATH)
-    train_raw, test_raw = split_data(data, train_ratio=0.8)
-    train_raw = train_raw.reshape(-1, 1)
-    test_raw = test_raw.reshape(-1, 1)
-    train_scaled, test_scaled, scaler = apply_standard_scaling(train_raw, test_raw)
-
-    results = []
+    all_results = []
     start_time = time.time()
 
-    # Loop over forecast horizons
-    for horizon in FORECAST_HORIZONS_REG:
-        print(f"\n=== Processing FORECAST_HORIZON {horizon} ===")
-        best_hp = bayesian_search_hyperparameters(train_scaled, test_scaled, scaler, horizon,
-                                                  search_space, time_limit=3600)
-        result = train_and_evaluate_regression(train_scaled, test_scaled, horizon, "80-20 split",
-                                               best_hp, scaler)
-        if result is not None:
-            result['best_hyperparameters'] = best_hp
-            results.append(result)
+    # Loop over each currency pair
+    for pair_name, data_path in currency_pairs.items():
+        print(f"\n=== Processing currency pair: {pair_name} ===")
+        data = load_data(data_path)
+        data = smooth_data(data, window=30)
+        train_raw, test_raw = split_data(data, train_ratio=0.8)
+        train_raw = train_raw.reshape(-1, 1)
+        test_raw = test_raw.reshape(-1, 1)
+        train_scaled, test_scaled, scaler = apply_standard_scaling(train_raw, test_raw)
 
-    # Save all regression results (without 'type' or an average row)
-    save_results_regression(results, REGRESSION_CSV_PATH)
+        # Loop over forecast horizons
+        for horizon in FORECAST_HORIZONS_REG:
+            print(f"\n=== Processing FORECAST_HORIZON {horizon} for {pair_name} ===")
+            best_hp = bayesian_search_hyperparameters(train_scaled, test_scaled, scaler, horizon,
+                                                      search_space, time_limit=600)
+            result = train_and_evaluate_regression(train_scaled, test_scaled, horizon, "80-20 split",
+                                                   best_hp, scaler)
+            if result is not None:
+                result['best_hyperparameters'] = best_hp
+                result['currency_pair'] = pair_name  # Record the currency pair in the results
+                all_results.append(result)
+
+    # Save aggregated results for all pairs in one file with the currency pair as the first column.
+    save_results_regression(all_results, AGGREGATED_REGRESSION_CSV_PATH)
     print(f"\nTotal execution time: {time.time() - start_time:.2f} seconds")
 
 
@@ -93,6 +104,15 @@ def load_data(data_path):
     return df['Close'].values
 
 
+def smooth_data(data, window=30):
+    if isinstance(data, np.ndarray):
+        data_series = pd.Series(data)
+    else:
+        data_series = data
+    smoothed_series = data_series.rolling(window=window, min_periods=1).mean()
+    return smoothed_series.values
+
+
 def split_data(data, train_ratio=0.8):
     n_samples = len(data)
     split_index = int(train_ratio * n_samples)
@@ -101,9 +121,6 @@ def split_data(data, train_ratio=0.8):
     return train_data, test_data
 
 
-# ==============================================================================
-# Z-Score Scaling for train and test data
-# ==============================================================================
 def apply_standard_scaling(train_data, test_data):
     scaler = StandardScaler()
     train_scaled = scaler.fit_transform(train_data)
@@ -262,7 +279,7 @@ def bayesian_search_hyperparameters(train_scaled, test_scaled, scaler, forecast_
         return mse_val
 
     study = optuna.create_study(direction="minimize")
-    # Optimize until the time limit (600 seconds) is reached.
+    # Optimize until the time limit is reached.
     study.optimize(objective, timeout=time_limit)
     best_hp = study.best_trial.params
     return best_hp
@@ -274,11 +291,16 @@ def bayesian_search_hyperparameters(train_scaled, test_scaled, scaler, forecast_
 def save_results_regression(results, csv_path):
     if results:
         results_df = pd.DataFrame(results)
+        # Reorder columns so that 'currency_pair' is the first column
+        cols = results_df.columns.tolist()
+        if 'currency_pair' in cols:
+            cols.remove('currency_pair')
+            cols = ['currency_pair'] + cols
+            results_df = results_df[cols]
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
         results_df.to_csv(csv_path, index=False)
-        print("\nFinal regression results:")
-        cols_to_show = ['mse', 'mae', 'rmse', 'r2_score', 'coverage_probability (%)', 'interval_width']
-        print(results_df[cols_to_show].to_string(index=False))
+        print(f"\nFinal regression results saved to {csv_path}:")
+        print(results_df.to_string(index=False))
     else:
         print("[Results] No regression results to save.")
 
