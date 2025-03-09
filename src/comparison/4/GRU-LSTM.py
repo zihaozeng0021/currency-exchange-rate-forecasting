@@ -11,7 +11,7 @@ from sklearn.preprocessing import MinMaxScaler
 
 import tensorflow as tf
 from keras.models import Sequential
-from keras.layers import LSTM, Dense, Input
+from keras.layers import LSTM, Dense, Input, GRU
 
 import optuna
 
@@ -82,6 +82,7 @@ def create_dataset_classification(dataset, look_back=1, forecast_horizon=1, thre
 def build_classification_model(look_back, units, forecast_horizon, learning_rate):
     model = Sequential([
         Input(shape=(look_back, 1)),
+        GRU(units, return_sequences=True),
         LSTM(units, return_sequences=False),
         Dense(forecast_horizon, activation='sigmoid')
     ])
@@ -225,7 +226,7 @@ def save_results(results, csv_path):
 # ==============================================================================
 def main():
     DATA_PATH = 'data/EURUSD.csv'
-    CLASSIFICATION_CSV_PATH = 'results/LSTM.csv'
+    CLASSIFICATION_CSV_PATH = 'results/GRU-LSTM.csv'
     FORECAST_HORIZONS_CLF = [1, 3, 5]
 
     search_space = {
