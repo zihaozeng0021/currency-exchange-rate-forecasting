@@ -92,7 +92,8 @@ def main():
     assets = {
         "oil": "oil.csv",
         "gold": "gold.csv",
-        "ftse": "ftse.csv"
+        "ftse": "ftse.csv",
+        "dxy": "dxy.csv"
     }
 
     for asset, filename in assets.items():
