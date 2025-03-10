@@ -17,7 +17,7 @@ graph TD
     8 --> 16[16, + Adam optimizer]
     8 --> 17[17, + Adamax optimizer]
     8 --> 18[18, + Nadam optimizer]
-    8 --> 19[19, + Adamgrad optimizer]
+    8 --> 19[19, + Adagrad optimizer]
     8 --> 20[20, + Adadelta optimizer]
     8 --> 21[21, + Ftrl optimizer]
     15 --> 22[Applied best parameters]

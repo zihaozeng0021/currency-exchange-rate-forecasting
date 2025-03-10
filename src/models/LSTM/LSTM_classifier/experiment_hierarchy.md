@@ -21,7 +21,7 @@ graph TD
     15 --> 20[20, + Adam optimizer]
     15 --> 21[21, + Adamax optimizer]
     15 --> 22[22, + Nadam optimizer]
-    15 --> 23[23, + Adamgrad optimizer]
+    15 --> 23[23, + Adgrad optimizer]
     15 --> 24[24, + Adadelta optimizer]
     15 --> 25[25, + Ftrl optimizer]
     22 --> 26[26, + Fixed threshold, currently the baseline]
