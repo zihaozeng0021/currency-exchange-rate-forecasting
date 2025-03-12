@@ -1,9 +1,10 @@
+\textcolor{red}{写的很难受, 该不该写Data Analysis? 总觉得不对劲}
+
 \section{Data Analysis}
-Data analysis is a critical step in understanding the underlying quality, patterns, and characteristic of the dataset.
+Data analysis is a critical step in understanding the underlying quality, patterns, and characteristics of the dataset.
 
 \subsection{Data Quality Check}
-Ensuring high data quality is a critical first step before any analysis.
-In this stage, the following checks are performed:
+Ensuring high data quality is a critical first step before any analysis. In this stage, the following checks are performed:
 \begin{itemize}
     \item \textbf{Missing Values:} Confirm that there are no missing entries, or if there are, decide on an appropriate imputation method.
     \item \textbf{Outliers:} Identify any extreme values using statistical methods (this project used IQR), or if there are any, determine if they need to be removed or capped.
@@ -11,12 +12,14 @@ In this stage, the following checks are performed:
     \item \textbf{Consistency and Integrity:} Ensure data types, ranges, and formats are consistent across the dataset.
 \end{itemize}
 
+\textbf{Results:} All datasets collected via yfinance contain no missing values or duplicates, and no outliers were detected using the Interquartile Range (IQR) method. Data types are consistent, with the `Date` as an object and `Close` as float64.
+
 \subsection{Exploratory Data Analysis}
-Exploratory Data Analysis (EDA) involves summarizing the main characteristics of the dataset using visual and quantitative methods.
-This project includes the following EDA techniques:
+Exploratory Data Analysis (EDA) involves summarizing the main characteristics of the dataset using visual and quantitative methods. This project includes the following EDA techniques:
 \begin{itemize}
     \item \textbf{Summary Statistics:} Compute mean, median, variance, and other descriptive measures to understand data distribution.
     \item \textbf{Line Chart for Long-Term Trends:} Plot the USDEUR exchange rate over time to reveal long-term trends and identify potential anomalies. (See Figure~\ref{fig:line_chart}.)
+    \item \textbf{Rolling Statistics for Volatility Analysis:} Compute the rolling mean and standard deviation of the USDEUR exchange rate using a 30-day window to assess volatility changes over time. (See Figure~\ref{fig:rolling_statistics}.)
 \end{itemize}
 
 \begin{figure}[H]
@@ -26,31 +29,32 @@ This project includes the following EDA techniques:
 \label{fig:line_chart}
 \end{figure}
 
-\textcolor{red}{QUESTION: Caption like this, should I write them more carefully?}
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{figures/rolling_statistics}
+\caption{Rolling Mean and Standard Deviation of the USDEUR Exchange Rate (The Primary Dataset))}
+\label{fig:rolling_statistics}
+\end{figure}
+
+For the primary dataset, its summary statistics indicate that the mean exchange rate is approximately 0.823 with a standard deviation of 0.084, which reflects moderate variability. The line charts visually confirms this stability, which highlights long-term fluctuations without evident anomalies.
 
 \subsection{Stationarity Testing}
-Stationarity testing is an important process in time series analysis.
-A stationary time series has constant statistical properties (mean, variance, autocorrelation) over time.
-Testing for stationarity helps make decision, such as if differencing or detrending are necessary.
+Stationarity testing is an important process in time series analysis. A stationary time series has statistical properties that do not change over time.
 
 \subsubsection{Augmented Dickey-Fuller Test}
-The Augmented Dickey-Fuller (ADF) test is a widely-used statistical test to assess the presence of a unit root in a time series sample.
-It operates under the following principles:
+The Augmented Dickey-Fuller (ADF) test operates under the following principles:
 \begin{itemize}
-    \item \textbf{Null Hypothesis (H\(_0\)):} The time series has a unit root, which means it is non-stationary.
+    \item \textbf{Null Hypothesis (H\(_0\)):} The time series has a unit root (non-stationary).
     \item \textbf{Alternative Hypothesis (H\(_1\)):} The time series is stationary.
-    \item \textbf{Mechanism:} The ADF test augments the standard Dickey-Fuller test by including lagged difference terms to account for higher order autoregressive processes.
-    If the test statistic is significantly lower than the critical values, we reject the null hypothesis and conclude that the series is stationary.
-    Otherwise, we fail to reject the null hypothesis.
 \end{itemize}
 
-\subsubsection{Kwiatkowski-Phillips-Schmidt-Shin Test}
-The Kwiatkowski-Phillips-Schmidt-Shin(KPSS) test complements the ADF test by taking the opposite approach:
+
+\subsubsection{KPSS Test}
+The KPSS test operates under these principles:
 \begin{itemize}
-    \item \textbf{Null Hypothesis (H\(_0\)):} The time series is stationary around a deterministic trend (or level stationary).
+    \item \textbf{Null Hypothesis (H\(_0\)):} The time series is stationary around a deterministic trend (level stationary).
     \item \textbf{Alternative Hypothesis (H\(_1\)):} The time series is non-stationary.
-    \item \textbf{Mechanism:} The KPSS test evaluates the null hypothesis by estimating the variance of a random walk component in the series.
-    If the test statistic exceeds the critical value, we reject the null hypothesis and conclude that the series is non-stationary.
-    Otherwise, we fail to reject the null hypothesis.
-    This test is particularly useful because it provides a different perspective on stationarity compared to the ADF test.
 \end{itemize}
+
+\textbf{Results:} Both the ADF and KPSS tests indicate that there are more than 99\% confidence that the primary dataset is non-stationary.
+This suggests that further differencing is required to achieve stationarity.
