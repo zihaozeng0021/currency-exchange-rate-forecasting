@@ -49,12 +49,13 @@ The Augmented Dickey-Fuller (ADF) test operates under the following principles:
 \end{itemize}
 
 
-\subsubsection{KPSS Test}
-The KPSS test operates under these principles:
+\subsubsection{Kwiatkowski-Phillips-Schmidt-Shin Test}
+The Kwiatkowski-Phillips-Schmidt-Shin (KPSS) test operates under these principles:
 \begin{itemize}
     \item \textbf{Null Hypothesis (H\(_0\)):} The time series is stationary around a deterministic trend (level stationary).
     \item \textbf{Alternative Hypothesis (H\(_1\)):} The time series is non-stationary.
 \end{itemize}
 
-\textbf{Results:} Both the ADF and KPSS tests indicate that there are more than 99\% confidence that the primary dataset is non-stationary.
-This suggests that further differencing is required to achieve stationarity.
+\textbf{Results:} The ADF test failed to reject the null hypothesis of a unit root at the 1\% significance level, while the KPSS test rejected the null hypothesis of stationarity at the 1\% level. Together, these results provide strong evidence that the dataset is non-stationary, which suggests that further differencing is required to achieve stationarity.
+
+\textcolor{red}{QUESTION: multivariate的feature selection部分不放在这里有影响吗?}
