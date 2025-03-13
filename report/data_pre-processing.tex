@@ -35,8 +35,10 @@ x' = \frac{x - \min(x)}{\max(x) - \min(x)}
 \end{equation}
 Min-max scaling is particularly useful when data distribution is not normal.
 
+Note that it is vital to invert the scaling transformation so that the regression metrics are calculated on the original scale.
 
-\subsection{Data Smoothing and Detrending}
+
+\subsection{Detrending and Addressing Non-Stationarity}
 
 Time series data often exhibits trends that can negatively affect predictive modeling. Differencing is an effective technique to remove trends and improve the stationarity of time series data. Differencing involves computing the difference between consecutive observations:
 \begin{equation}
@@ -44,6 +46,9 @@ x'_t = x_t - x_{t-1}
 \label{eq:differencing}
 \end{equation}
 where \(x'_t\) is the differenced data at time \(t\).
+
+However, I failed to invert the differencing transformation for regression metrics calculation, thus the differencing was not applied to regression models.
+\textcolor{red}{QUESTION: 提及个人的错误是否合适？}
 
 \subsection{Sequence Transformation}
 
