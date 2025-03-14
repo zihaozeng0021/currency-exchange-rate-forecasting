@@ -8,11 +8,12 @@ def main():
     data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../data/raw"))
     os.makedirs(data_dir, exist_ok=True)
 
-    # Define tickers for oil, gold, and FTSE 100.
+    # Define tickers for oil, gold, FTSE 100, and DXY (US Dollar Index)
     tickers = {
         "oil": "CL=F",     # WTI Crude Oil Futures
         "gold": "GC=F",    # Gold Futures
         "ftse": "^FTSE",   # FTSE 100 Index
+        "dxy": "DX-Y.NYB", # US Dollar Index (DXY)
     }
 
     # Define the date range for historical data.
