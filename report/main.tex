@@ -1,0 +1,46 @@
+\documentclass[12pt]{report}
+\usepackage{graphicx}
+\usepackage{amsmath, amssymb}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{float}
+% TODO: Remove ctex to ensure there are no Chinese characters in the final document
+\usepackage{ctex}
+
+\setcounter{secnumdepth}{5}
+\setcounter{tocdepth}{5}
+
+% Map deeper levels to paragraph and subparagraph commands:
+\newcommand{\subsubsubsection}{\paragraph}
+\newcommand{\subsubsubsubsection}{\subparagraph}
+
+\begin{document}
+
+\tableofcontents
+
+\cleardoublepage
+\addcontentsline{toc}{chapter}{Abstract}
+\include{abstract}        % Abstract
+
+\cleardoublepage
+\addcontentsline{toc}{chapter}{List of Figures}
+\listoffigures           % List of Figures
+
+\cleardoublepage
+\addcontentsline{toc}{chapter}{List of Tables}
+\listoftables            % List of Tables
+
+\cleardoublepage
+\include{introduction}      % Chapter 1: Introduction
+\include{background}        % Chapter 2: Background
+\include{methodology}       % Chapter 3: Methodology
+\include{evaluation}        % Chapter 4: Evaluation Methods
+\include{development}       % Chapter 5: Development
+\include{results_discussion}% Chapter 6: Results and Discussion
+\include{conclusion}        % Chapter 7: Conclusion
+
+\bibliographystyle{unsrt}
+\bibliography{references}
+
+\end{document}

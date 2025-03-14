@@ -1,0 +1,33 @@
+\section{Data Collection}
+
+Data for this study were obtained from the Yahoo Finance platform using Python’s \texttt{yfinance} package.
+The data collection process was designed to support three main aspects of the research: (i) the primary dataset, (ii) supplementary features for multivariate modeling, and (iii) datasets for benchmarking against previous studies.
+
+\textcolor{red}{QUESTION: 我该不该引用yfinance的官方文档？}
+\subsection{Primary Dataset}
+The primary dataset consists of the USDEUR exchange rate with a daily frequency, spanning from December 1, 2003 to January 31, 2025.
+
+\textcolor{red}{QUESTION: 我是否应该提及具体的数据收集的实施脚本}
+
+
+\subsection{Supplementary Features for Multivariate Models}
+To build a robust multivariate model, additional financial indicators were collected.
+The supplementary data include:
+\begin{itemize}
+    \item Crude Oil Prices
+    \item Gold Prices
+    \item FTSE 100 Index
+    \item US Dollar Index
+\end{itemize}
+These datasets cover the period from January 1, 2000 to January 31, 2025 with a daily frequency.
+When used, they are aligned based on the corresponding currency pair's time base.
+
+
+\subsection{Benchmarking Datasets}
+For comparative analysis with prior research, additional datasets were collected to ensure that the time series forecasting results are directly comparable. Two sets of benchmarking data were collected:
+\begin{enumerate}
+    \item A multi-currency dataset covering the period from December 18, 2017 to January 27, 2023. This dataset includes exchange rates for EUR/USD, GBP/USD, AUD/USD, and NZD/USD. For USD/JPY data, the script inverts the closing prices to derive the JPY/USD rate\cite{Garcia2023ComparisonRegression}.
+    \item A focused subset for the EUR/USD pair spanning from January 1, 2013 to January 1, 2018\cite{Yildirim2021ComparisonClassification}.
+\end{enumerate}
+
+\textcolor{red}{QUESTION: 直接这样引用数据来源的论文，会不会有点突兀?}
