@@ -57,11 +57,13 @@ def main():
         # Determine number of features (should be 2: Currency_Close and FTSE_Close)
         num_features = train_scaled.shape[1]
 
+        time_limit_for_search = 3600 if pair_name in ('EURUSD', 'GBPUSD') else 600
+
         # Loop over forecast horizons
         for horizon in FORECAST_HORIZONS_REG:
             print(f"\n=== Processing FORECAST_HORIZON {horizon} for {pair_name} ===")
             best_hp = bayesian_search_hyperparameters(train_scaled, test_scaled, scaler, horizon,
-                                                      search_space, num_features, time_limit=600)
+                                                      search_space, num_features, time_limit=time_limit_for_search)
             result = train_and_evaluate_regression(train_scaled, test_scaled, horizon, "80-20 split",
                                                    best_hp, scaler, num_features)
             if result is not None:
@@ -258,7 +260,7 @@ def train_and_evaluate_regression(train_data: np.ndarray, test_data: np.ndarray,
 # Bayesian Optimization for Hyperparameters using Optuna
 # ==============================================================================
 def bayesian_search_hyperparameters(train_scaled, test_scaled, scaler, forecast_horizon, search_space,
-                                    num_features, time_limit=3600):
+                                    num_features, time_limit=600):
     def objective(trial):
         # Sample hyperparameters using the intervals from search_space
         epochs = trial.suggest_int('epochs', search_space['epochs'][0], search_space['epochs'][1])
